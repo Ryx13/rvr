@@ -1,0 +1,273 @@
+"""
+RVR — Core orchestrator
+Manages the full scan pipeline and micro-variant mode
+"""
+
+import sys
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable
+
+from rvr.utils.console import console, log_info, log_success, log_warn, log_error, log_section
+from rvr.utils.state import RVRState
+
+
+# Profile settings
+PROFILES = {
+    "stealth": {
+        "nmap_timing": "1",
+        "nmap_flags": "-sS --scan-delay 2s",
+        "ffuf_rate": 10,
+    },
+    "normal": {
+        "nmap_timing": "3",
+        "nmap_flags": "-sS -sV -sC",
+        "ffuf_rate": 100,
+    },
+    "aggressive": {
+        "nmap_timing": "4",
+        "nmap_flags": "-sS -sV -sC -A",
+        "ffuf_rate": 500,
+    },
+}
+
+
+class RVRCore:
+    def __init__(self, state: RVRState):
+        self.state = state
+        self.profile = PROFILES[state.profile]
+        self.start_time = datetime.now()
+
+    # ── Full suite mode ────────────────────────────────────────────
+    def run_full(self):
+        """Run all applicable modules based on target type and discoveries"""
+        s = self.state
+
+        # Phase 1 — OSINT (domain targets only)
+        if "osint" not in s.skip and s.target_type == "domain":
+            log_section("Phase 1 — Passive OSINT")
+            self._run_module("osint", self._phase_osint)
+
+        # Phase 2 — Active network sweep (always)
+        if "network" not in s.skip:
+            log_section("Phase 2 — Network Sweep")
+            self._run_module("network", self._phase_network)
+
+        # Phase 3 — Conditional modules based on open ports
+        if s.open_ports:
+            self._run_conditional_phases()
+
+        # Phase 4 — AI analysis
+        if "ai" not in s.skip:
+            log_section("Phase 4 — AI Analysis")
+            self._run_module("ai", self._phase_ai)
+
+        # Phase 5 — Report generation
+        if "report" not in s.skip:
+            log_section("Phase 5 — Report Generation")
+            self._run_module("report", self._phase_report)
+
+        # Phase 6 — Discord notification
+        if not s.no_discord:
+            self._phase_discord()
+
+        # Save final state
+        out = s.save()
+        elapsed = datetime.now() - self.start_time
+
+        console.print()
+        console.print(f"[green][✓] Scan complete in {elapsed.seconds}s[/green]")
+        console.print(f"[green][✓] Raw data saved to: {out}[/green]")
+        console.print(f"[green][✓] Report saved to: {s.output_dir / 'report.pdf'}[/green]")
+
+    def _run_conditional_phases(self):
+        """Run phases conditionally based on open ports"""
+        s = self.state
+        tasks = {}
+
+        # Web enumeration
+        if "web" not in s.skip and s.get_web_ports():
+            tasks["web"] = self._phase_web
+
+        # SMB enumeration
+        if "smb" not in s.skip and s.has_any_port(139, 445):
+            tasks["smb"] = self._phase_smb
+
+        # NFS enumeration
+        if "nfs" not in s.skip and s.has_any_port(111, 2049):
+            tasks["nfs"] = self._phase_nfs
+
+        # SNMP enumeration
+        if "snmp" not in s.skip and s.has_port(161):
+            tasks["snmp"] = self._phase_snmp
+
+        if not tasks:
+            log_warn("No conditional modules triggered by open ports")
+            return
+
+        log_section("Phase 3 — Conditional Enumeration")
+        log_info(f"Triggered modules: {', '.join(tasks.keys())}")
+
+        # Run conditional modules in parallel
+        with ThreadPoolExecutor(max_workers=self.state.threads) as executor:
+            futures = {
+                executor.submit(func): name
+                for name, func in tasks.items()
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    log_error(f"Module '{name}' failed: {e}")
+                    self.state.mark_failed(name)
+
+    def _run_module(self, name: str, func: Callable):
+        """Run a single module with error handling"""
+        try:
+            func()
+            self.state.mark_complete(name)
+        except Exception as e:
+            log_error(f"Module '{name}' failed: {e}")
+            self.state.mark_failed(name)
+
+    # ── Phase implementations ──────────────────────────────────────
+    def _phase_osint(self):
+        from rvr.modules.osint import OSINTModule
+        OSINTModule(self.state, self.profile).run()
+
+    def _phase_network(self):
+    	from rvr.modules.network import NetworkModule
+    	mod = NetworkModule(self.state, self.profile)
+    	mod.run()
+    	if self.state.udp_scan:
+            mod.run_udp()
+
+    def _phase_web(self):
+        from rvr.modules.web import WebModule
+        WebModule(self.state, self.profile).run()
+
+    def _phase_smb(self):
+        from rvr.modules.smb import SMBModule
+        SMBModule(self.state, self.profile).run()
+
+    def _phase_nfs(self):
+        from rvr.modules.nfs import NFSModule
+        NFSModule(self.state, self.profile).run()
+
+    def _phase_snmp(self):
+        from rvr.modules.snmp import SNMPModule
+        SNMPModule(self.state, self.profile).run()
+
+    def _phase_ai(self):
+        from rvr.modules.ai_analysis import AIModule
+        AIModule(self.state).run()
+
+    def _phase_report(self):
+        from rvr.output.pdf_report import PDFReport
+        PDFReport(self.state).generate()
+
+    def _phase_discord(self):
+        from rvr.output.discord_notify import DiscordNotifier
+        DiscordNotifier(self.state).send()
+
+    # ── Micro-variant mode ─────────────────────────────────────────
+    def run_micro(self, tool: str):
+        """Run a single tool in interactive mode"""
+        log_section(f"Micro-variant — {tool}")
+        log_info(f"Running {tool} against {self.state.target}")
+
+        micro_map = {
+            "nmap":       self._micro_nmap,
+            "ffuf":       self._micro_ffuf,
+            "subfinder":  self._micro_subfinder,
+            "nuclei":     self._micro_nuclei,
+            "enum4linux": self._micro_enum4linux,
+            "netexec":    self._micro_netexec,
+            "snmpwalk":   self._micro_snmpwalk,
+            "whatweb":    self._micro_whatweb,
+        }
+
+        fn = micro_map.get(tool)
+        if fn:
+            fn()
+        else:
+            log_error(f"Unknown tool: {tool}")
+
+        self.state.save()
+
+    def _micro_nmap(self):
+        from rvr.modules.network import NetworkModule
+        if self.state.udp_scan:
+            mod.run_udp()
+        console.print("[cyan]Nmap options:[/cyan]")
+        console.print("  [1] Quick scan (top 1000 ports)")
+        console.print("  [2] Full port scan (1-65535)")
+        console.print("  [3] UDP scan (top 200)")
+        console.print("  [4] Custom flags")
+        choice = input("\nSelect [1-4]: ").strip()
+
+        extra = ""
+        if choice == "1":
+            extra = "--top-ports 1000"
+        elif choice == "2":
+            extra = "-p-"
+        elif choice == "3":
+            extra = "-sU --top-ports 200"
+        elif choice == "4":
+            extra = input("Enter custom nmap flags: ").strip()
+
+        from rvr.modules.network import NetworkModule
+        if self.state.udp_scan:
+            mod.run_udp()
+        mod = NetworkModule(self.state, self.profile)
+        mod.run(extra_flags=extra)
+
+    def _micro_ffuf(self):
+        console.print("[cyan]ffuf options:[/cyan]")
+        url = input("Target URL (e.g. http://10.10.11.1/FUZZ): ").strip()
+        wordlist = input(
+            f"Wordlist [default: /usr/share/seclists/Discovery/Web-Content/common.txt]: "
+        ).strip() or "/usr/share/seclists/Discovery/Web-Content/common.txt"
+        extensions = input("Extensions (e.g. php,html,txt) [blank for none]: ").strip()
+
+        from rvr.modules.web import WebModule
+        mod = WebModule(self.state, self.profile)
+        mod.run_ffuf(url=url, wordlist=wordlist, extensions=extensions)
+
+    def _micro_subfinder(self):
+        from rvr.modules.osint import OSINTModule
+        OSINTModule(self.state, self.profile).run_subfinder()
+
+    def _micro_nuclei(self):
+        console.print("[cyan]Nuclei options:[/cyan]")
+        console.print("  [1] Default templates")
+        console.print("  [2] CVE templates only")
+        console.print("  [3] Severity: critical + high only")
+        choice = input("Select [1-3]: ").strip()
+
+        from rvr.modules.web import WebModule
+        mod = WebModule(self.state, self.profile)
+        mod.run_nuclei(choice=choice)
+
+    def _micro_enum4linux(self):
+        from rvr.modules.smb import SMBModule
+        SMBModule(self.state, self.profile).run()
+
+    def _micro_netexec(self):
+        console.print("[cyan]NetExec options:[/cyan]")
+        console.print("  [1] SMB — anonymous login check")
+        console.print("  [2] SMB — share enumeration")
+        console.print("  [3] RID cycling")
+        choice = input("Select [1-3]: ").strip()
+
+        from rvr.modules.smb import SMBModule
+        SMBModule(self.state, self.profile).run_netexec(choice=choice)
+
+    def _micro_snmpwalk(self):
+        from rvr.modules.snmp import SNMPModule
+        SNMPModule(self.state, self.profile).run()
+
+    def _micro_whatweb(self):
+        from rvr.modules.web import WebModule
+        WebModule(self.state, self.profile).run_whatweb()

@@ -1,0 +1,42 @@
+# RVR Configuration
+version: "1.0"
+
+wordlists:
+  web_common: /usr/share/seclists/Discovery/Web-Content/common.txt
+  web_medium: /usr/share/seclists/Discovery/Web-Content/big.txt
+  dns_common: /usr/share/seclists/Discovery/DNS/combined_subdomains.txt
+
+tools:
+  nmap: nmap
+  ffuf: ffuf
+  subfinder: subfinder
+  nuclei: nuclei
+  enum4linux: enum4linux-ng
+  netexec: netexec
+  masscan: masscan
+  snmpwalk: snmpwalk
+  whatweb: whatweb
+  showmount: showmount
+  theharvester: theHarvester
+
+concurrency:
+  max_workers: 4
+  heavy_tools: 2
+
+profiles:
+  stealth:
+    nmap_timing: T1
+    nmap_flags: "-sS --scan-delay 2s"
+    ffuf_rate: 10
+  normal:
+    nmap_timing: T3
+    nmap_flags: "-sS -sV -sC"
+    ffuf_rate: 100
+  aggressive:
+    nmap_timing: T4
+    nmap_flags: "-sS -sV -sC -A"
+    ffuf_rate: 500
+
+output:
+  base_dir: ~/rvr_loot
+  pdf_theme: professional
