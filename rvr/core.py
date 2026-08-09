@@ -3,7 +3,6 @@ RVR — Core orchestrator
 Manages the full scan pipeline and micro-variant mode
 """
 
-import sys
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
@@ -12,7 +11,7 @@ from rich.prompt import Prompt, IntPrompt
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 
 from rvr.utils.console import (
-    console, log_info, log_success, log_warn, log_error, log_section,
+    console, log_info, log_warn, log_error, log_section,
     triggered_modules_table, end_summary_panel,
 )
 from rvr.utils.state import RVRState
@@ -69,7 +68,7 @@ class RVRCore:
             self._phase_discord()
 
         # Save final state
-        out = s.save()
+        s.save()
         elapsed = datetime.now() - self.start_time
 
         console.print()

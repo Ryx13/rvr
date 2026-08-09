@@ -5,7 +5,11 @@ Main entry point and CLI orchestrator
 """
 
 import argparse
+import os
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 # Add project root to path
@@ -146,6 +150,54 @@ Examples:
     return parser
 
 
+def ensure_sudo(state) -> None:
+    """Pre-authenticate sudo before any scan phase starts.
+
+    nmap needs raw-socket privileges for -sS, so network.py prepends
+    'sudo' to its own nmap invocations when not already running as root.
+    The problem: those calls happen inside Rich Live displays (spinners /
+    progress bars) that continuously repaint the terminal. sudo's password
+    prompt writes straight to /dev/tty, and the live redraw loop overwrites
+    it before it's ever visible — the scan just hangs silently until the
+    600s subprocess timeout fires, with no indication a password was ever
+    needed.
+
+    Authenticating here, before any Live display exists, puts the prompt
+    on a clean terminal. A background thread then refreshes the cached
+    credential periodically so a long scan can't lose it mid-run and hit
+    the exact same hidden-prompt hang deeper inside the pipeline.
+    """
+    if os.geteuid() == 0:
+        return
+
+    # Nothing in this run will need raw sockets — skip the prompt entirely.
+    needs_nmap = state.tool == "nmap" or "network" not in state.skip
+    if not needs_nmap:
+        return
+
+    console.print("[cyan][*] nmap needs raw-socket privileges — checking sudo access...[/cyan]")
+    try:
+        result = subprocess.run(["sudo", "-v"])
+    except FileNotFoundError:
+        console.print("[yellow][!] sudo not found — nmap scans requiring raw sockets will fail[/yellow]")
+        return
+
+    if result.returncode != 0:
+        console.print("[yellow][!] sudo authentication failed — nmap scans will likely fail or hang[/yellow]")
+        return
+
+    def _keepalive():
+        while True:
+            time.sleep(240)
+            try:
+                subprocess.run(["sudo", "-n", "-v"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+    threading.Thread(target=_keepalive, daemon=True).start()
+    console.print()
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -232,6 +284,11 @@ def main():
         done = ", ".join(state.completed_modules) or "none"
         log_info(f"Already completed: {done}")
         console.print()
+
+    # Authenticate sudo now, on a clean terminal, before any phase's Rich
+    # Live display (spinner/progress bar) starts — see ensure_sudo()'s
+    # docstring for why this has to happen here and not lazily.
+    ensure_sudo(state)
 
     # Run
     core = RVRCore(state)
