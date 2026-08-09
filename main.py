@@ -6,14 +6,12 @@ Main entry point and CLI orchestrator
 
 import argparse
 import sys
-import os
 from pathlib import Path
-from datetime import datetime
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from rvr.utils.console import console, print_banner
+from rvr.utils.console import console, print_banner, startup_panel, log_info
 from rvr.utils.state import RVRState
 from rvr.utils.validator import validate_target
 from rvr.utils.network_info import get_attacker_ip
@@ -21,21 +19,39 @@ from rvr.utils.config import get_config
 from rvr.core import RVRCore
 
 
+class RVRHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Preserves explicit newlines inside an argument's help= text, not just
+    the epilog — lets --tool/--skip lay out their choices as a readable
+    list instead of being squashed into one auto-wrapped paragraph."""
+    def _split_lines(self, text, width):
+        return text.splitlines()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rvr",
         description="RVR — Ryxvoid Recon Framework",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=RVRHelpFormatter,
         epilog="""
 Examples:
   rvr -t 10.10.11.1                          Full suite, normal profile
   rvr -t 10.10.11.1 --profile stealth        Full suite, stealth profile
   rvr -t 10.10.11.1 --profile aggressive     Full suite, aggressive profile
-  rvr -t example.com --profile normal        Domain target with OSINT
-  rvr --tool nmap -t 10.10.11.1             Micro-variant: nmap only
-  rvr --tool ffuf -t 10.10.11.1             Micro-variant: ffuf only
-  rvr --tool enum4linux -t 10.10.11.1       Micro-variant: SMB enum only
-  rvr -t 10.10.11.1 --resume                Resume a scan, skip completed modules
+  rvr -t example.com --profile normal        Domain target — runs OSINT first
+  rvr -t 10.10.11.1 --resume                 Resume a scan, skip completed modules
+  rvr -t 10.10.11.1 --skip osint ai          Skip specific phases
+  rvr -t 10.10.11.1 --config ./my.yaml       Use a custom config.yaml
+  rvr -t 10.10.11.1 -o ./loot --threads 8    Custom output dir + thread count
+  rvr -t 10.10.11.1 --udp                    Include a UDP top-200 sweep
+
+  Micro-variant mode — run one tool interactively instead of the full pipeline:
+  rvr --tool nmap -t 10.10.11.1              Port scan only
+  rvr --tool ffuf -t 10.10.11.1              Directory fuzzing only
+  rvr --tool nuclei -t 10.10.11.1            Vulnerability templates only
+  rvr --tool enum4linux -t 10.10.11.1        SMB enumeration only
+  rvr --tool ftp -t 10.10.11.1               FTP anonymous login check only
+  rvr --tool ldapsearch -t 10.10.11.1        LDAP anonymous bind check only
+  rvr --tool rdp -t 10.10.11.1               RDP NTLM info + NLA check only
         """
     )
 
@@ -58,18 +74,31 @@ Examples:
                  "enum4linux", "netexec", "snmpwalk", "whatweb",
                  "ftp", "ldapsearch", "rdp"],
         metavar="TOOL",
-        help="Run a single tool in interactive micro-variant mode"
+        help=(
+            "Run a single tool interactively instead of the full pipeline:\n"
+            "  nmap        port scan — quick top-1000 / full 1-65535 / UDP / custom flags\n"
+            "  ffuf        directory & file fuzzing\n"
+            "  nuclei      vulnerability template scan\n"
+            "  whatweb     web technology fingerprinting\n"
+            "  subfinder   passive subdomain enumeration\n"
+            "  enum4linux  SMB enumeration (enum4linux-ng)\n"
+            "  netexec     SMB anonymous login / share / RID-cycling checks\n"
+            "  snmpwalk    SNMP community walk\n"
+            "  ftp         FTP anonymous login check + banner grab\n"
+            "  ldapsearch  LDAP anonymous bind check + AD enumeration\n"
+            "  rdp         RDP NTLM info leak + NLA/encryption check"
+        )
     )
     parser.add_argument(
         "-o", "--output",
         metavar="DIR",
-        help="Override output directory (default: <config output.base_dir>/<target>, "
+        help="Override output directory (default: <config output.base_dir>/<target>,\n"
              "normally ~/rvr_loot/<target>)"
     )
     parser.add_argument(
         "--config",
         metavar="PATH",
-        help="Path to a config.yaml to use instead of the bundled default "
+        help="Path to a config.yaml to use instead of the bundled default\n"
              "(env var RVR_CONFIG also works)"
     )
     parser.add_argument(
@@ -78,24 +107,40 @@ Examples:
         choices=["osint", "network", "web", "smb", "nfs", "snmp",
                  "ftp", "databases", "ldap", "rdp", "ai", "report"],
         metavar="MODULE",
-        help="Skip specific modules (e.g. --skip osint ai)"
+        help=(
+            "Skip one or more phases/modules (space-separated):\n"
+            "  osint      passive OSINT — subfinder/theHarvester (domain targets only)\n"
+            "  network    Nmap sweep (always runs otherwise — everything else depends on it)\n"
+            "  web        WhatWeb, ffuf, Gobuster, Nuclei, gowitness screenshots\n"
+            "  smb        enum4linux-ng, NetExec\n"
+            "  nfs        showmount / rpcinfo enumeration\n"
+            "  snmp       snmpwalk\n"
+            "  ftp        anonymous login check + banner grab\n"
+            "  databases  MySQL / MSSQL / PostgreSQL / Redis / MongoDB checks\n"
+            "  ldap       anonymous bind check + AD enumeration\n"
+            "  rdp        NTLM info leak + NLA/encryption check\n"
+            "  ai         AI CVE correlation (Gemini / Groq / Claude / OpenAI)\n"
+            "  report     PDF report generation\n"
+            "Example: --skip osint ai"
+        )
     )
-    parser.add_argument("--no-ai",      action="store_true", help="Disable Gemini AI analysis")
+    parser.add_argument("--no-ai",      action="store_true", help="Disable AI analysis (all providers)")
     parser.add_argument("--no-discord", action="store_true", help="Disable Discord webhook")
     parser.add_argument("--no-report",  action="store_true", help="Skip PDF report generation")
     parser.add_argument(
         "--resume", action="store_true",
-        help="Resume a previous scan in the output directory — skip modules that "
-             "already completed successfully instead of re-running them (report "
+        help="Resume a previous scan in the output directory — skip modules that\n"
+             "already completed successfully instead of re-running them (report\n"
              "generation always re-runs so it reflects current state)"
     )
     parser.add_argument("--ports",      metavar="PORTS",     help="Override port range (e.g. --ports 1-65535)")
     parser.add_argument("--udp", action="store_true", help="Include UDP scan (top 200 ports)")
     parser.add_argument(
         "--threads", type=int, default=None, metavar="N",
-        help="Max concurrent threads (default: config.yaml's concurrency.max_workers, normally 4)"
+        help="Max concurrent threads for Phase 3 (default: config.yaml's\n"
+             "concurrency.max_workers, normally 4)"
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output — print every underlying command as it runs")
     parser.add_argument("--version",    action="version", version="RVR v1.0.0")
 
     return parser
@@ -163,27 +208,30 @@ def main():
     # in this output dir, if one exists. Current-run options (profile,
     # skip, threads, etc.) always come from this invocation's CLI args —
     # only scan results and which modules already succeeded are restored.
+    resumed_ok = False
     if args.resume:
         previous = RVRState.load_previous_scan(output_dir)
         if previous:
             state.hydrate_from_dict(previous)
-            done = ", ".join(state.completed_modules) or "none"
-            console.print(f"[cyan][*] Resuming previous scan — already completed: {done}[/cyan]")
+            resumed_ok = True
         else:
             console.print("[yellow][!] --resume set but no previous scan found in this output dir — starting fresh[/yellow]")
 
-    # Print startup info
-    console.print(f"[cyan][*] Target     :[/cyan] [bold]{args.target}[/bold] ({target_type})")
-    console.print(f"[cyan][*] Profile    :[/cyan] [bold]{args.profile}[/bold]")
-    console.print(f"[cyan][*] Output dir :[/cyan] [bold]{output_dir}[/bold]")
+    startup_panel(
+        target=args.target,
+        target_type=target_type,
+        profile=args.profile,
+        output_dir=output_dir,
+        attacker_ip=atk_ip,
+        attacker_iface=atk_iface,
+        resume=resumed_ok,
+        threads=threads,
+    )
 
-    if atk_ip:
-        console.print(f"[cyan][*] Attacker IP :[/cyan] [bold]{atk_ip}[/bold] ({atk_iface})")
-    else:
-        console.print("[yellow][!] No VPN/network interface detected — connect OpenVPN first[/yellow]")
-
-    console.print(f"[cyan][*] Started    :[/cyan] [bold]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/bold]")
-    console.print()
+    if resumed_ok:
+        done = ", ".join(state.completed_modules) or "none"
+        log_info(f"Already completed: {done}")
+        console.print()
 
     # Run
     core = RVRCore(state)
