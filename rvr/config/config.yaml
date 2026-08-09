@@ -18,6 +18,8 @@ tools:
   whatweb: whatweb
   showmount: showmount
   theharvester: theHarvester
+  gowitness: gowitness
+  ldapsearch: ldapsearch
 
 concurrency:
   max_workers: 4

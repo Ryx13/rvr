@@ -36,6 +36,7 @@ class WebModule(BaseModule):
             console.print()
 
             self._run_step("WhatWeb fingerprinting", self.run_whatweb, base_url)
+            self._run_step("Screenshot capture", self.run_screenshot, base_url)
             self._run_step("ffuf directory fuzzing", self.run_ffuf, f"{base_url}/FUZZ")
             self._run_step("Gobuster brute-force", self.run_gobuster, base_url)
             self._run_step("Nuclei vulnerability scan", self.run_nuclei, base_url)
@@ -169,6 +170,44 @@ class WebModule(BaseModule):
             findings = self._parse_nuclei_json(out_file)
             self.state.nuclei_findings.extend(findings)
             self.state.add_artifact(f"nuclei_{safe[:30]}", out_file)
+
+    def run_screenshot(self, url: Optional[str] = None):
+        """Capture a screenshot of the target web port via gowitness (v3 CLI)."""
+        if not self.tool_exists("gowitness"):
+            return
+        if not url:
+            url = self._default_url()
+
+        shots_dir = self.ensure_dir("web/screenshots")
+        safe = url.replace("://", "_").replace("/", "_").replace(":", "_")
+        jsonl_file = self.web_dir / f"gowitness_{safe[:50]}.jsonl"
+
+        cmd = [
+            "gowitness", "scan", "single",
+            "--url", url,
+            "--screenshot-path", str(shots_dir),
+            "--write-jsonl",
+            "--write-jsonl-file", str(jsonl_file),
+        ]
+        self.run_command(cmd, timeout=90, silent=True)
+
+        shot_path = self._find_screenshot(shots_dir, url)
+        if shot_path:
+            self.state.screenshots.append({"url": url, "path": str(shot_path)})
+            self.state.add_artifact(f"screenshot_{safe[:30]}", shot_path)
+        if jsonl_file.exists():
+            self.state.add_artifact(f"gowitness_jsonl_{safe[:30]}", jsonl_file)
+
+    def _find_screenshot(self, shots_dir: Path, url: str) -> Optional[Path]:
+        """gowitness names screenshots by a hash of the URL; grab the most
+        recently written file in the target dir rather than guessing the name."""
+        try:
+            files = [p for p in shots_dir.glob("*.jpeg")] + [p for p in shots_dir.glob("*.png")]
+            if not files:
+                return None
+            return max(files, key=lambda p: p.stat().st_mtime)
+        except Exception:
+            return None
 
     def _filter_redirect_noise(self, findings: List[Dict]) -> List[Dict]:
         """

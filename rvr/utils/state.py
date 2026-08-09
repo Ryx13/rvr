@@ -28,9 +28,6 @@ class RVRState:
     tool: Optional[str] = None
     no_discord: bool = False
     udp_scan: bool = False
-    udp_scan: bool = False
-    attacker_ip: Optional[str] = None
-    attacker_iface: Optional[str] = None
 
     # Scan results — populated as modules run
     start_time: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -55,6 +52,21 @@ class RVRState:
 
     # SNMP results
     snmp_data: Dict[str, Any] = field(default_factory=dict)
+
+    # FTP results
+    ftp_findings: Dict[str, Any] = field(default_factory=dict)
+
+    # Database results (mysql/mssql/postgresql/redis/mongodb -> findings dict)
+    database_findings: Dict[str, Any] = field(default_factory=dict)
+
+    # LDAP / Active Directory results
+    ldap_findings: Dict[str, Any] = field(default_factory=dict)
+
+    # RDP results
+    rdp_findings: Dict[str, Any] = field(default_factory=dict)
+
+    # Web screenshots — [{"url": ..., "path": ...}]
+    screenshots: List[Dict[str, str]] = field(default_factory=list)
 
     # OSINT results (domain targets)
     subdomains: List[str] = field(default_factory=list)
@@ -126,6 +138,11 @@ class RVRState:
             "smb": self.smb_findings,
             "nfs": {"mounts": self.nfs_mounts},
             "snmp": self.snmp_data,
+            "ftp": self.ftp_findings,
+            "databases": self.database_findings,
+            "ldap": self.ldap_findings,
+            "rdp": self.rdp_findings,
+            "screenshots": self.screenshots,
             "osint": {
                 "subdomains": self.subdomains,
                 "emails": self.emails,

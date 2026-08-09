@@ -101,6 +101,22 @@ class RVRCore:
         if "snmp" not in s.skip and s.has_port(161):
             tasks["snmp"] = self._phase_snmp
 
+        # FTP enumeration
+        if "ftp" not in s.skip and s.has_port(21):
+            tasks["ftp"] = self._phase_ftp
+
+        # Database enumeration
+        if "databases" not in s.skip and s.has_any_port(3306, 1433, 5432, 6379, 27017):
+            tasks["databases"] = self._phase_databases
+
+        # LDAP / AD enumeration
+        if "ldap" not in s.skip and s.has_any_port(389, 636, 3268, 3269):
+            tasks["ldap"] = self._phase_ldap
+
+        # RDP enumeration
+        if "rdp" not in s.skip and s.has_port(3389):
+            tasks["rdp"] = self._phase_rdp
+
         if not tasks:
             log_warn("No conditional modules triggered by open ports")
             return
@@ -137,10 +153,10 @@ class RVRCore:
         OSINTModule(self.state, self.profile).run()
 
     def _phase_network(self):
-    	from rvr.modules.network import NetworkModule
-    	mod = NetworkModule(self.state, self.profile)
-    	mod.run()
-    	if self.state.udp_scan:
+        from rvr.modules.network import NetworkModule
+        mod = NetworkModule(self.state, self.profile)
+        mod.run()
+        if self.state.udp_scan:
             mod.run_udp()
 
     def _phase_web(self):
@@ -158,6 +174,22 @@ class RVRCore:
     def _phase_snmp(self):
         from rvr.modules.snmp import SNMPModule
         SNMPModule(self.state, self.profile).run()
+
+    def _phase_ftp(self):
+        from rvr.modules.ftp import FTPModule
+        FTPModule(self.state, self.profile).run()
+
+    def _phase_databases(self):
+        from rvr.modules.databases import DatabaseModule
+        DatabaseModule(self.state, self.profile).run()
+
+    def _phase_ldap(self):
+        from rvr.modules.ldap_enum import LDAPModule
+        LDAPModule(self.state, self.profile).run()
+
+    def _phase_rdp(self):
+        from rvr.modules.rdp import RDPModule
+        RDPModule(self.state, self.profile).run()
 
     def _phase_ai(self):
         from rvr.modules.ai_analysis import AIModule
@@ -186,6 +218,9 @@ class RVRCore:
             "netexec":    self._micro_netexec,
             "snmpwalk":   self._micro_snmpwalk,
             "whatweb":    self._micro_whatweb,
+            "ftp":        self._micro_ftp,
+            "ldapsearch": self._micro_ldapsearch,
+            "rdp":        self._micro_rdp,
         }
 
         fn = micro_map.get(tool)
@@ -197,9 +232,6 @@ class RVRCore:
         self.state.save()
 
     def _micro_nmap(self):
-        from rvr.modules.network import NetworkModule
-        if self.state.udp_scan:
-            mod.run_udp()
         console.print("[cyan]Nmap options:[/cyan]")
         console.print("  [1] Quick scan (top 1000 ports)")
         console.print("  [2] Full port scan (1-65535)")
@@ -218,8 +250,6 @@ class RVRCore:
             extra = input("Enter custom nmap flags: ").strip()
 
         from rvr.modules.network import NetworkModule
-        if self.state.udp_scan:
-            mod.run_udp()
         mod = NetworkModule(self.state, self.profile)
         mod.run(extra_flags=extra)
 
@@ -271,3 +301,15 @@ class RVRCore:
     def _micro_whatweb(self):
         from rvr.modules.web import WebModule
         WebModule(self.state, self.profile).run_whatweb()
+
+    def _micro_ftp(self):
+        from rvr.modules.ftp import FTPModule
+        FTPModule(self.state, self.profile).run()
+
+    def _micro_ldapsearch(self):
+        from rvr.modules.ldap_enum import LDAPModule
+        LDAPModule(self.state, self.profile).run()
+
+    def _micro_rdp(self):
+        from rvr.modules.rdp import RDPModule
+        RDPModule(self.state, self.profile).run()

@@ -53,7 +53,8 @@ Examples:
     parser.add_argument(
         "--tool",
         choices=["nmap", "ffuf", "subfinder", "nuclei",
-                 "enum4linux", "netexec", "snmpwalk", "whatweb"],
+                 "enum4linux", "netexec", "snmpwalk", "whatweb",
+                 "ftp", "ldapsearch", "rdp"],
         metavar="TOOL",
         help="Run a single tool in interactive micro-variant mode"
     )
@@ -65,7 +66,8 @@ Examples:
     parser.add_argument(
         "--skip",
         nargs="+",
-        choices=["osint", "network", "web", "smb", "nfs", "snmp", "ai", "report"],
+        choices=["osint", "network", "web", "smb", "nfs", "snmp",
+                 "ftp", "databases", "ldap", "rdp", "ai", "report"],
         metavar="MODULE",
         help="Skip specific modules (e.g. --skip osint ai)"
     )
