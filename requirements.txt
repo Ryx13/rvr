@@ -2,4 +2,13 @@ rich>=13.0.0
 python-dotenv>=1.0.0
 requests>=2.31.0
 reportlab>=4.0.0
-google-generativeai>=0.3.0
+
+# AI analysis providers — install whichever you plan to use (see .env.example
+# to select which one AI_PROVIDER picks up). google-genai is the modern
+# "from google import genai" SDK; do not confuse it with the deprecated
+# google-generativeai package, which exposes a different import path.
+# The openai package also covers Groq (and any other OpenAI-compatible
+# endpoint) — same client, different base_url.
+google-genai>=0.3.0
+openai>=1.50.0
+# anthropic>=0.40.0
