@@ -34,6 +34,7 @@ Examples:
   rvr --tool nmap -t 10.10.11.1             Micro-variant: nmap only
   rvr --tool ffuf -t 10.10.11.1             Micro-variant: ffuf only
   rvr --tool enum4linux -t 10.10.11.1       Micro-variant: SMB enum only
+  rvr -t 10.10.11.1 --resume                Resume a scan, skip completed modules
         """
     )
 
@@ -74,6 +75,12 @@ Examples:
     parser.add_argument("--no-ai",      action="store_true", help="Disable Gemini AI analysis")
     parser.add_argument("--no-discord", action="store_true", help="Disable Discord webhook")
     parser.add_argument("--no-report",  action="store_true", help="Skip PDF report generation")
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Resume a previous scan in the output directory — skip modules that "
+             "already completed successfully instead of re-running them (report "
+             "generation always re-runs so it reflects current state)"
+    )
     parser.add_argument("--ports",      metavar="PORTS",     help="Override port range (e.g. --ports 1-65535)")
     parser.add_argument("--udp", action="store_true", help="Include UDP scan (top 200 ports)")
     parser.add_argument("--threads",    type=int, default=4, metavar="N", help="Max concurrent threads (default: 4)")
@@ -130,7 +137,21 @@ def main():
         udp_scan=getattr(args, "udp", False),
         attacker_ip=atk_ip,
         attacker_iface=atk_iface,
+        resume=args.resume,
     )
+
+    # --resume: hydrate results + completion tracking from a previous scan
+    # in this output dir, if one exists. Current-run options (profile,
+    # skip, threads, etc.) always come from this invocation's CLI args —
+    # only scan results and which modules already succeeded are restored.
+    if args.resume:
+        previous = RVRState.load_previous_scan(output_dir)
+        if previous:
+            state.hydrate_from_dict(previous)
+            done = ", ".join(state.completed_modules) or "none"
+            console.print(f"[cyan][*] Resuming previous scan — already completed: {done}[/cyan]")
+        else:
+            console.print("[yellow][!] --resume set but no previous scan found in this output dir — starting fresh[/yellow]")
 
     # Print startup info
     console.print(f"[cyan][*] Target     :[/cyan] [bold]{args.target}[/bold] ({target_type})")

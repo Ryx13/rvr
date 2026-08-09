@@ -65,7 +65,7 @@ class RVRCore:
         # Phase 5 — Report generation
         if "report" not in s.skip:
             log_section("Phase 5 — Report Generation")
-            self._run_module("report", self._phase_report)
+            self._run_module("report", self._phase_report, always=True)
 
         # Phase 6 — Discord notification
         if not s.no_discord:
@@ -81,65 +81,52 @@ class RVRCore:
         console.print(f"[green][✓] Report saved to: {s.output_dir / 'report.pdf'}[/green]")
 
     def _run_conditional_phases(self):
-        """Run phases conditionally based on open ports"""
+        """Run phases conditionally based on open ports, driven by the module registry"""
+        from rvr.modules.registry import get_triggered_modules, load_module_class
+
         s = self.state
-        tasks = {}
+        triggered = get_triggered_modules(s)
 
-        # Web enumeration
-        if "web" not in s.skip and s.get_web_ports():
-            tasks["web"] = self._phase_web
+        if s.resume:
+            already_done = [spec for spec in triggered if s.is_complete(spec.name)]
+            if already_done:
+                log_info(f"Resume: skipping already-completed module(s): {', '.join(spec.name for spec in already_done)}")
+            triggered = [spec for spec in triggered if not s.is_complete(spec.name)]
 
-        # SMB enumeration
-        if "smb" not in s.skip and s.has_any_port(139, 445):
-            tasks["smb"] = self._phase_smb
-
-        # NFS enumeration
-        if "nfs" not in s.skip and s.has_any_port(111, 2049):
-            tasks["nfs"] = self._phase_nfs
-
-        # SNMP enumeration
-        if "snmp" not in s.skip and s.has_port(161):
-            tasks["snmp"] = self._phase_snmp
-
-        # FTP enumeration
-        if "ftp" not in s.skip and s.has_port(21):
-            tasks["ftp"] = self._phase_ftp
-
-        # Database enumeration
-        if "databases" not in s.skip and s.has_any_port(3306, 1433, 5432, 6379, 27017):
-            tasks["databases"] = self._phase_databases
-
-        # LDAP / AD enumeration
-        if "ldap" not in s.skip and s.has_any_port(389, 636, 3268, 3269):
-            tasks["ldap"] = self._phase_ldap
-
-        # RDP enumeration
-        if "rdp" not in s.skip and s.has_port(3389):
-            tasks["rdp"] = self._phase_rdp
-
-        if not tasks:
+        if not triggered:
             log_warn("No conditional modules triggered by open ports")
             return
 
         log_section("Phase 3 — Conditional Enumeration")
-        log_info(f"Triggered modules: {', '.join(tasks.keys())}")
+        log_info(f"Triggered modules: {', '.join(spec.name for spec in triggered)}")
+
+        def run_spec(spec):
+            cls = load_module_class(spec)
+            cls(self.state, self.profile).run()
 
         # Run conditional modules in parallel
         with ThreadPoolExecutor(max_workers=self.state.threads) as executor:
             futures = {
-                executor.submit(func): name
-                for name, func in tasks.items()
+                executor.submit(run_spec, spec): spec.name
+                for spec in triggered
             }
             for future in as_completed(futures):
                 name = futures[future]
                 try:
                     future.result()
+                    self.state.mark_complete(name)
                 except Exception as e:
                     log_error(f"Module '{name}' failed: {e}")
                     self.state.mark_failed(name)
 
-    def _run_module(self, name: str, func: Callable):
-        """Run a single module with error handling"""
+    def _run_module(self, name: str, func: Callable, always: bool = False):
+        """Run a single module with error handling. If --resume is set and
+        this module already succeeded in a prior run, skip it — unless
+        always=True (used for report generation, which should reflect
+        whatever the current state is even when resuming)."""
+        if self.state.resume and not always and self.state.is_complete(name):
+            log_info(f"Resume: skipping '{name}' — already completed")
+            return
         try:
             func()
             self.state.mark_complete(name)
@@ -158,38 +145,6 @@ class RVRCore:
         mod.run()
         if self.state.udp_scan:
             mod.run_udp()
-
-    def _phase_web(self):
-        from rvr.modules.web import WebModule
-        WebModule(self.state, self.profile).run()
-
-    def _phase_smb(self):
-        from rvr.modules.smb import SMBModule
-        SMBModule(self.state, self.profile).run()
-
-    def _phase_nfs(self):
-        from rvr.modules.nfs import NFSModule
-        NFSModule(self.state, self.profile).run()
-
-    def _phase_snmp(self):
-        from rvr.modules.snmp import SNMPModule
-        SNMPModule(self.state, self.profile).run()
-
-    def _phase_ftp(self):
-        from rvr.modules.ftp import FTPModule
-        FTPModule(self.state, self.profile).run()
-
-    def _phase_databases(self):
-        from rvr.modules.databases import DatabaseModule
-        DatabaseModule(self.state, self.profile).run()
-
-    def _phase_ldap(self):
-        from rvr.modules.ldap_enum import LDAPModule
-        LDAPModule(self.state, self.profile).run()
-
-    def _phase_rdp(self):
-        from rvr.modules.rdp import RDPModule
-        RDPModule(self.state, self.profile).run()
 
     def _phase_ai(self):
         from rvr.modules.ai_analysis import AIModule

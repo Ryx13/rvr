@@ -28,6 +28,7 @@ class RVRState:
     tool: Optional[str] = None
     no_discord: bool = False
     udp_scan: bool = False
+    resume: bool = False
 
     # Scan results — populated as modules run
     start_time: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -76,6 +77,11 @@ class RVRState:
     ai_summary: Optional[str] = None
     ai_cves: List[str] = field(default_factory=list)
     ai_vectors: List[str] = field(default_factory=list)
+    ai_risk_level: Optional[str] = None
+    ai_manual_validation: List[str] = field(default_factory=list)
+    ai_priority_targets: List[str] = field(default_factory=list)
+    ai_provider_used: Optional[str] = None
+    ai_raw: Dict[str, Any] = field(default_factory=dict)
 
     # Raw tool outputs (stored as file paths)
     artifacts: Dict[str, str] = field(default_factory=dict)
@@ -110,10 +116,18 @@ class RVRState:
         self.artifacts[key] = str(path)
 
     def mark_complete(self, module: str):
-        self.completed_modules.append(module)
+        if module in self.failed_modules:
+            self.failed_modules.remove(module)
+        if module not in self.completed_modules:
+            self.completed_modules.append(module)
 
     def mark_failed(self, module: str):
-        self.failed_modules.append(module)
+        if module not in self.failed_modules:
+            self.failed_modules.append(module)
+
+    def is_complete(self, module: str) -> bool:
+        """True if this module already succeeded in a previous run (only meaningful with --resume)"""
+        return module in self.completed_modules
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialise state to dict for JSON output"""
@@ -151,6 +165,11 @@ class RVRState:
                 "summary": self.ai_summary,
                 "cves": self.ai_cves,
                 "vectors": self.ai_vectors,
+                "risk_level": self.ai_risk_level,
+                "manual_validation": self.ai_manual_validation,
+                "priority_targets": self.ai_priority_targets,
+                "provider_used": self.ai_provider_used,
+                "raw": self.ai_raw,
             },
             "artifacts": self.artifacts,
         }
@@ -162,3 +181,60 @@ class RVRState:
         with open(out, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
         return out
+
+    @staticmethod
+    def load_previous_scan(output_dir: Path) -> Optional[Dict[str, Any]]:
+        """Read a prior raw_data.json from output_dir, if one exists. Returns
+        None (rather than raising) if there's nothing to resume from, so
+        callers can fall back to a normal fresh scan."""
+        path = Path(output_dir) / "raw_data.json"
+        if not path.exists():
+            return None
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def hydrate_from_dict(self, data: Dict[str, Any]):
+        """Populate this state's results + completion tracking from a
+        previously saved raw_data.json, so a --resume run can skip modules
+        that already succeeded instead of re-scanning from scratch.
+        Current-run options (skip/threads/profile/etc.) are left untouched —
+        only scan *results* and completion tracking are restored."""
+        meta = data.get("meta", {})
+        self.completed_modules = list(meta.get("completed_modules", []))
+        self.failed_modules = list(meta.get("failed_modules", []))
+
+        network = data.get("network", {})
+        self.open_ports = network.get("open_ports", self.open_ports)
+
+        web = data.get("web", {})
+        self.web_findings = web.get("findings", self.web_findings)
+        self.web_technologies = web.get("technologies", self.web_technologies)
+        self.nuclei_findings = web.get("nuclei", self.nuclei_findings)
+
+        self.smb_findings = data.get("smb", self.smb_findings)
+        self.nfs_mounts = data.get("nfs", {}).get("mounts", self.nfs_mounts)
+        self.snmp_data = data.get("snmp", self.snmp_data)
+        self.ftp_findings = data.get("ftp", self.ftp_findings)
+        self.database_findings = data.get("databases", self.database_findings)
+        self.ldap_findings = data.get("ldap", self.ldap_findings)
+        self.rdp_findings = data.get("rdp", self.rdp_findings)
+        self.screenshots = data.get("screenshots", self.screenshots)
+
+        osint = data.get("osint", {})
+        self.subdomains = osint.get("subdomains", self.subdomains)
+        self.emails = osint.get("emails", self.emails)
+
+        ai = data.get("ai", {})
+        self.ai_summary = ai.get("summary", self.ai_summary)
+        self.ai_cves = ai.get("cves", self.ai_cves)
+        self.ai_vectors = ai.get("vectors", self.ai_vectors)
+        self.ai_risk_level = ai.get("risk_level", self.ai_risk_level)
+        self.ai_manual_validation = ai.get("manual_validation", self.ai_manual_validation)
+        self.ai_priority_targets = ai.get("priority_targets", self.ai_priority_targets)
+        self.ai_provider_used = ai.get("provider_used", self.ai_provider_used)
+        self.ai_raw = ai.get("raw", self.ai_raw)
+
+        self.artifacts = data.get("artifacts", self.artifacts)
