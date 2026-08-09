@@ -1,16 +1,16 @@
 """
 RVR — AI Analysis module
-Uses Gemini API to analyse scan results and generate insights
+Sends structured scan findings to an AI provider (Gemini / Claude / OpenAI —
+see ai_providers.py) for CVE correlation and attack-path suggestions.
 """
 
-import os
 import json
-from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
 
 from rvr.modules.base import BaseModule
+from rvr.modules.ai_providers import get_provider
 from rvr.utils.console import log_info, log_success, log_warn, log_error
 from rvr.utils.state import RVRState
 
@@ -20,22 +20,25 @@ load_dotenv()
 class AIModule(BaseModule):
     def __init__(self, state: RVRState):
         super().__init__(state, {})
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.provider = get_provider()
 
     def run(self):
         """Generate AI analysis of scan results"""
-        if not self.api_key:
-            log_warn("GEMINI_API_KEY not set in .env — skipping AI analysis")
+        if not self.provider:
+            log_warn(
+                "No AI provider configured — set GEMINI_API_KEY, ANTHROPIC_API_KEY, "
+                "or OPENAI_API_KEY in .env — skipping AI analysis"
+            )
             return
 
-        if not self.state.open_ports and not self.state.web_findings:
+        if not self._has_data():
             log_warn("No scan data to analyse — skipping AI analysis")
             return
 
-        log_info("Sending scan data to Gemini for analysis...")
+        log_info(f"Sending scan data to {self.provider.name} ({self.provider.model}) for analysis...")
 
         prompt = self._build_prompt()
-        response = self._query_gemini(prompt)
+        response = self.provider.query(prompt)
 
         if response:
             self._parse_response(response)
@@ -45,17 +48,22 @@ class AIModule(BaseModule):
         else:
             log_warn("AI analysis failed or returned no response")
 
+    def _has_data(self) -> bool:
+        s = self.state
+        return bool(
+            s.open_ports or s.web_findings or s.ftp_findings
+            or s.database_findings or s.ldap_findings or s.rdp_findings
+        )
+
     def _build_prompt(self) -> str:
-        """Build a structured prompt from scan data"""
+        """Build a structured prompt from all scan data collected so far"""
         s = self.state
 
-        # Summarise open ports
         ports_summary = "\n".join([
-            f"  - {p['port']}/{p['proto']}: {p['service']} {p['version']}"
+            f"  - {p['port']}/{p['proto']}: {p['service']} {p.get('version', '')}"
             for p in s.open_ports
         ])
 
-        # Summarise web findings
         web_summary = ""
         if s.web_findings:
             interesting = [f for f in s.web_findings if f["status"] in [200, 201, 401, 403]]
@@ -65,7 +73,6 @@ class AIModule(BaseModule):
                 for f in interesting[:20]
             ])
 
-        # Nuclei findings
         nuclei_summary = ""
         if s.nuclei_findings:
             nuclei_summary = f"\nNuclei findings ({len(s.nuclei_findings)}):\n"
@@ -75,15 +82,14 @@ class AIModule(BaseModule):
                 for f in s.nuclei_findings[:10]
             ])
 
-        # SMB findings
-        smb_summary = ""
-        if s.smb_findings:
-            smb_summary = f"\nSMB findings: {json.dumps(s.smb_findings, indent=2)}"
-
-        # Technologies
-        tech_summary = ""
-        if s.web_technologies:
-            tech_summary = f"\nDetected technologies: {', '.join(s.web_technologies)}"
+        smb_summary = f"\nSMB findings: {json.dumps(s.smb_findings, indent=2)}" if s.smb_findings else ""
+        nfs_summary = f"\nNFS mounts: {', '.join(s.nfs_mounts)}" if s.nfs_mounts else ""
+        snmp_summary = f"\nSNMP data: {json.dumps(s.snmp_data, indent=2)}" if s.snmp_data else ""
+        ftp_summary = f"\nFTP findings: {json.dumps(s.ftp_findings, indent=2)}" if s.ftp_findings else ""
+        db_summary = f"\nDatabase findings: {json.dumps(s.database_findings, indent=2)}" if s.database_findings else ""
+        ldap_summary = f"\nLDAP findings: {json.dumps(s.ldap_findings, indent=2)}" if s.ldap_findings else ""
+        rdp_summary = f"\nRDP findings: {json.dumps(s.rdp_findings, indent=2)}" if s.rdp_findings else ""
+        tech_summary = f"\nDetected technologies: {', '.join(s.web_technologies)}" if s.web_technologies else ""
 
         prompt = f"""You are a penetration testing assistant analysing reconnaissance data.
 Analyse the following scan results for target: {s.target}
@@ -94,6 +100,12 @@ OPEN PORTS:
 {web_summary}
 {nuclei_summary}
 {smb_summary}
+{nfs_summary}
+{snmp_summary}
+{ftp_summary}
+{db_summary}
+{ldap_summary}
+{rdp_summary}
 {tech_summary}
 
 Provide your response in the following JSON format ONLY — no markdown, no preamble:
@@ -114,30 +126,8 @@ Provide your response in the following JSON format ONLY — no markdown, no prea
 
         return prompt
 
-    def _query_gemini(self, prompt: str) -> Optional[str]:
-        """Send prompt to Gemini API and return response"""
-        try:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=self.api_key)
-
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-            )
-            return response.text
-
-        except ImportError:
-            log_error("google-genai not installed. Run: pip install google-genai")
-            return None
-        except Exception as e:
-            log_error(f"Gemini API error: {e}")
-            return None
-
     def _parse_response(self, response: str):
-        """Parse Gemini JSON response into state"""
-        # Strip any markdown code blocks if present
+        """Parse the provider's JSON response into state"""
         response = response.strip()
         if response.startswith("```"):
             lines = response.split("\n")
@@ -149,31 +139,27 @@ Provide your response in the following JSON format ONLY — no markdown, no prea
             self.state.ai_summary = data.get("executive_summary", "")
             self.state.ai_cves = data.get("probable_cves", [])
             self.state.ai_vectors = data.get("attack_vectors", [])
+            self.state.ai_risk_level = data.get("risk_level", "Unknown")
+            self.state.ai_manual_validation = data.get("manual_validation", [])
+            self.state.ai_priority_targets = data.get("priority_targets", [])
+            self.state.ai_provider_used = self.provider.name
+            self.state.ai_raw = data
 
-            # Store full response in state
-            self.state.smb_findings["ai_full"] = data
-
-            # Save to file
             ai_file = self.state.output_dir / "ai_analysis.json"
             with open(ai_file, "w") as f:
                 json.dump(data, f, indent=2)
             self.state.add_artifact("ai_analysis", ai_file)
 
-            # Log key findings
-            risk = data.get("risk_level", "Unknown")
-            log_success(f"Risk level: {risk}")
+            log_success(f"Risk level: {self.state.ai_risk_level}")
 
-            vectors = data.get("attack_vectors", [])
-            if vectors:
+            if self.state.ai_vectors:
                 log_success("Attack vectors identified:")
-                for v in vectors[:3]:
+                for v in self.state.ai_vectors[:3]:
                     log_success(f"  → {v}")
 
-            cves = data.get("probable_cves", [])
-            if cves:
-                log_success(f"Probable CVEs: {', '.join(cves[:5])}")
+            if self.state.ai_cves:
+                log_success(f"Probable CVEs: {', '.join(self.state.ai_cves[:5])}")
 
         except json.JSONDecodeError:
-            # If JSON parsing fails, store raw response as summary
             self.state.ai_summary = response[:1000]
             log_warn("AI response was not valid JSON — stored as raw summary")

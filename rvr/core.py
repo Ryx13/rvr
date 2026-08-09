@@ -8,7 +8,13 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
-from rvr.utils.console import console, log_info, log_success, log_warn, log_error, log_section
+from rich.prompt import Prompt, IntPrompt
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
+
+from rvr.utils.console import (
+    console, log_info, log_success, log_warn, log_error, log_section,
+    triggered_modules_table, end_summary_panel,
+)
 from rvr.utils.state import RVRState
 from rvr.utils.config import get_config
 
@@ -67,9 +73,7 @@ class RVRCore:
         elapsed = datetime.now() - self.start_time
 
         console.print()
-        console.print(f"[green][✓] Scan complete in {elapsed.seconds}s[/green]")
-        console.print(f"[green][✓] Raw data saved to: {out}[/green]")
-        console.print(f"[green][✓] Report saved to: {s.output_dir / 'report.pdf'}[/green]")
+        end_summary_panel(s, elapsed.seconds)
 
     def _run_conditional_phases(self):
         """Run phases conditionally based on open ports, driven by the module registry"""
@@ -89,26 +93,45 @@ class RVRCore:
             return
 
         log_section("Phase 3 — Conditional Enumeration")
-        log_info(f"Triggered modules: {', '.join(spec.name for spec in triggered)}")
+        triggered_modules_table(triggered)
 
         def run_spec(spec):
             cls = load_module_class(spec)
             cls(self.state, self.profile).run()
 
-        # Run conditional modules in parallel
-        with ThreadPoolExecutor(max_workers=self.state.threads) as executor:
-            futures = {
-                executor.submit(run_spec, spec): spec.name
-                for spec in triggered
-            }
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    future.result()
-                    self.state.mark_complete(name)
-                except Exception as e:
-                    log_error(f"Module '{name}' failed: {e}")
-                    self.state.mark_failed(name)
+        # Run conditional modules in parallel, with a live progress bar
+        # tracking overall completion. Individual modules still print their
+        # own detailed step-by-step status as before — Rich supports plain
+        # console.print() calls from other threads while a Progress bar is
+        # active on the same console, so the two coexist without conflict.
+        # progress.update() calls below only ever happen on the main thread
+        # (as_completed() yields here, not in the worker threads), so there's
+        # no concurrent-write risk on the progress bar itself either.
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]Conditional enumeration[/bold cyan]"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("modules", total=len(triggered))
+
+            with ThreadPoolExecutor(max_workers=self.state.threads) as executor:
+                futures = {
+                    executor.submit(run_spec, spec): spec.name
+                    for spec in triggered
+                }
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        future.result()
+                        self.state.mark_complete(name)
+                    except Exception as e:
+                        log_error(f"Module '{name}' failed: {e}")
+                        self.state.mark_failed(name)
+                    progress.advance(task)
 
     def _run_module(self, name: str, func: Callable, always: bool = False):
         """Run a single module with error handling. If --resume is set and
@@ -183,17 +206,17 @@ class RVRCore:
         console.print("  [2] Full port scan (1-65535)")
         console.print("  [3] UDP scan (top 200)")
         console.print("  [4] Custom flags")
-        choice = input("\nSelect [1-4]: ").strip()
+        choice = IntPrompt.ask("Select", choices=["1", "2", "3", "4"], default=1)
 
         extra = ""
-        if choice == "1":
+        if choice == 1:
             extra = "--top-ports 1000"
-        elif choice == "2":
+        elif choice == 2:
             extra = "-p-"
-        elif choice == "3":
+        elif choice == 3:
             extra = "-sU --top-ports 200"
-        elif choice == "4":
-            extra = input("Enter custom nmap flags: ").strip()
+        elif choice == 4:
+            extra = Prompt.ask("Enter custom nmap flags").strip()
 
         from rvr.modules.network import NetworkModule
         mod = NetworkModule(self.state, self.profile)
@@ -201,12 +224,10 @@ class RVRCore:
 
     def _micro_ffuf(self):
         console.print("[cyan]ffuf options:[/cyan]")
-        url = input("Target URL (e.g. http://10.10.11.1/FUZZ): ").strip()
+        url = Prompt.ask("Target URL", default=f"http://{self.state.target}/FUZZ")
         default_wordlist = self.config.wordlist("web_common") or "/usr/share/seclists/Discovery/Web-Content/common.txt"
-        wordlist = input(
-            f"Wordlist [default: {default_wordlist}]: "
-        ).strip() or default_wordlist
-        extensions = input("Extensions (e.g. php,html,txt) [blank for none]: ").strip()
+        wordlist = Prompt.ask("Wordlist", default=default_wordlist)
+        extensions = Prompt.ask("Extensions (e.g. php,html,txt)", default="").strip()
 
         from rvr.modules.web import WebModule
         mod = WebModule(self.state, self.profile)
@@ -221,11 +242,11 @@ class RVRCore:
         console.print("  [1] Default templates")
         console.print("  [2] CVE templates only")
         console.print("  [3] Severity: critical + high only")
-        choice = input("Select [1-3]: ").strip()
+        choice = IntPrompt.ask("Select", choices=["1", "2", "3"], default=1)
 
         from rvr.modules.web import WebModule
         mod = WebModule(self.state, self.profile)
-        mod.run_nuclei(choice=choice)
+        mod.run_nuclei(choice=str(choice))
 
     def _micro_enum4linux(self):
         from rvr.modules.smb import SMBModule
@@ -236,10 +257,10 @@ class RVRCore:
         console.print("  [1] SMB — anonymous login check")
         console.print("  [2] SMB — share enumeration")
         console.print("  [3] RID cycling")
-        choice = input("Select [1-3]: ").strip()
+        choice = IntPrompt.ask("Select", choices=["1", "2", "3"], default=1)
 
         from rvr.modules.smb import SMBModule
-        SMBModule(self.state, self.profile).run_netexec(choice=choice)
+        SMBModule(self.state, self.profile).run_netexec(choice=str(choice))
 
     def _micro_snmpwalk(self):
         from rvr.modules.snmp import SNMPModule

@@ -25,9 +25,9 @@ class NetworkModule(BaseModule):
         from datetime import datetime
 
         # Step 1 — Quick port discovery
-        console.print("  [cyan]○[/cyan]  Port discovery scanning 1-65535...", end="\r")
         t0 = datetime.now()
-        open_ports = self._quick_scan()
+        with console.status("[cyan]Port discovery scanning 1-65535...[/cyan]", spinner="dots"):
+            open_ports = self._quick_scan()
         elapsed = (datetime.now() - t0).seconds
         elapsed_str = f"{elapsed//60}m {elapsed%60}s" if elapsed >= 60 else f"{elapsed}s"
 
@@ -43,9 +43,9 @@ class NetworkModule(BaseModule):
         console.print()
 
         # Step 2 — Service detection
-        console.print("  [cyan]○[/cyan]  Service & version detection...", end="\r")
         t1 = datetime.now()
-        self._service_scan(open_ports, extra_flags)
+        with console.status("[cyan]Service & version detection...[/cyan]", spinner="dots"):
+            self._service_scan(open_ports, extra_flags)
         elapsed2 = (datetime.now() - t1).seconds
         elapsed2_str = f"{elapsed2//60}m {elapsed2%60}s" if elapsed2 >= 60 else f"{elapsed2}s"
 
@@ -198,7 +198,6 @@ class NetworkModule(BaseModule):
     def run_udp(self, top_ports: int = 200):
         """Run a UDP scan on top ports"""
         import os
-        console.print("  [cyan]○[/cyan]  UDP scan (top 200)...", end="\r")
         from datetime import datetime
         t0 = datetime.now()
         xml_out = self.net_dir / "udp_scan.xml"
@@ -215,7 +214,8 @@ class NetworkModule(BaseModule):
         if os.geteuid() != 0:
             cmd = ["sudo"] + cmd
 
-        self.run_command(cmd, timeout=600, silent=True)
+        with console.status("[cyan]UDP scan (top 200)...[/cyan]", spinner="dots"):
+            self.run_command(cmd, timeout=600, silent=True)
         elapsed = (datetime.now() - t0).seconds
         elapsed_str = f"{elapsed//60}m {elapsed%60}s" if elapsed >= 60 else f"{elapsed}s"
 
