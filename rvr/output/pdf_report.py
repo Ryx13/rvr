@@ -18,7 +18,7 @@ try:
     from reportlab.lib.units import mm, cm
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-        HRFlowable, PageBreak, KeepTogether
+        HRFlowable, PageBreak, KeepTogether, Image
     )
     from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
     REPORTLAB_OK = True
@@ -80,8 +80,23 @@ class PDFReport:
         if self.state.web_findings or self.state.web_technologies:
             story += self._web(styles)
 
+        if self.state.screenshots:
+            story += self._screenshots(styles)
+
         if self.state.nuclei_findings:
             story += self._vulns(styles)
+
+        if self.state.ftp_findings:
+            story += self._ftp(styles)
+
+        if self.state.database_findings:
+            story += self._databases(styles)
+
+        if self.state.ldap_findings:
+            story += self._ldap(styles)
+
+        if self.state.rdp_findings:
+            story += self._rdp(styles)
 
         if self.state.smb_findings:
             story += self._smb(styles)
@@ -192,13 +207,7 @@ class PDFReport:
         story.append(Spacer(1, 1.2*cm))
 
         s = self.state
-        risk = "Unknown"
-        ai_file = s.output_dir / "ai_analysis.json"
-        if ai_file.exists():
-            try:
-                risk = json.loads(ai_file.read_text()).get("risk_level", "Unknown")
-            except Exception:
-                pass
+        risk = s.ai_risk_level or "Unknown"
 
         rows = [
             ["TARGET",          s.target],
@@ -507,6 +516,115 @@ class PDFReport:
         story.append(Spacer(1, 0.4*cm))
         return story
 
+    def _ftp(self, styles):
+        story = [Paragraph("FTP Enumeration", styles["h1"])]
+        f = self.state.ftp_findings
+
+        rows = [["Property", "Value"]]
+        if f.get("banner"):
+            rows.append(["Banner", self._escape(f["banner"])[:100]])
+        anon = f.get("anonymous_login")
+        rows.append(["Anonymous Login", "ALLOWED" if anon else "DENIED"])
+        story.append(self._tbl(rows, [5*cm, 12*cm]))
+
+        if f.get("anon_listing"):
+            story.append(Spacer(1, 0.2*cm))
+            story.append(Paragraph(
+                f"Directory listing visible via anonymous FTP ({len(f['anon_listing'])} item(s)):",
+                styles["h2"]
+            ))
+            listing_rows = [["Path"]] + [[self._escape(p)] for p in f["anon_listing"][:50]]
+            story.append(self._tbl(listing_rows, [17*cm]))
+
+        story.append(Spacer(1, 0.4*cm))
+        return story
+
+    def _databases(self, styles):
+        story = [Paragraph("Database Enumeration", styles["h1"])]
+        rows = [["Service", "Port", "Status"]]
+        for name, finding in self.state.database_findings.items():
+            flagged = finding.get("empty_password") or finding.get("unauthenticated")
+            status = finding.get("note") or ("MISCONFIGURED / UNAUTHENTICATED" if flagged else "Detected — no misconfig found")
+            rows.append([name, str(finding.get("port", "")), self._escape(status)[:70]])
+        story.append(self._tbl(rows, [4*cm, 2*cm, 11*cm]))
+        story.append(Spacer(1, 0.4*cm))
+        return story
+
+    def _ldap(self, styles):
+        story = [Paragraph("LDAP / Active Directory", styles["h1"])]
+        d = self.state.ldap_findings
+
+        rows = [["Property", "Value"]]
+        if "anonymous_bind" in d:
+            rows.append(["Anonymous Bind", "ALLOWED" if d["anonymous_bind"] else "DENIED"])
+        for key in ["domain", "default_naming_context"]:
+            if d.get(key):
+                rows.append([key.replace("_", " ").title(), self._escape(str(d[key]))[:80]])
+        if len(rows) > 1:
+            story.append(self._tbl(rows, [5*cm, 12*cm]))
+
+        if d.get("anonymous_users"):
+            story.append(Spacer(1, 0.2*cm))
+            story.append(Paragraph(
+                f"Accounts enumerable via anonymous bind ({len(d['anonymous_users'])}):",
+                styles["h2"]
+            ))
+            user_rows = [["Account"]] + [[self._escape(u)] for u in d["anonymous_users"][:50]]
+            story.append(self._tbl(user_rows, [17*cm]))
+
+        story.append(Spacer(1, 0.4*cm))
+        return story
+
+    def _rdp(self, styles):
+        story = [Paragraph("RDP Enumeration", styles["h1"])]
+        d = self.state.rdp_findings
+
+        rows = [["Property", "Value"]]
+        for key, label in [
+            ("dns_computer", "Hostname (DNS)"), ("netbios_computer", "Hostname (NetBIOS)"),
+            ("dns_domain", "Domain (DNS)"), ("netbios_domain", "Domain (NetBIOS)"),
+            ("os_build", "OS Build"),
+        ]:
+            if d.get(key):
+                rows.append([label, self._escape(str(d[key]))[:80]])
+        if "nla_enabled" in d:
+            rows.append(["NLA Enforced", "Yes" if d["nla_enabled"] else "No"])
+        if d.get("security_protocols"):
+            rows.append(["Security Protocols", ", ".join(d["security_protocols"])])
+
+        if len(rows) > 1:
+            story.append(self._tbl(rows, [5*cm, 12*cm]))
+        story.append(Spacer(1, 0.4*cm))
+        return story
+
+    def _screenshots(self, styles):
+        story = [Paragraph("Web Screenshots", styles["h1"])]
+        story.append(Paragraph(
+            f"{len(self.state.screenshots)} screenshot(s) captured.",
+            styles["body"]
+        ))
+        story.append(Spacer(1, 0.2*cm))
+
+        max_width = 16 * cm
+        for shot in self.state.screenshots:
+            path = shot.get("path")
+            url = shot.get("url", "")
+            if not path or not Path(path).exists():
+                continue
+            try:
+                img = Image(path)
+                if img.imageWidth > 0:
+                    scale = min(max_width / img.imageWidth, 1.0)
+                    img.drawWidth = img.imageWidth * scale
+                    img.drawHeight = img.imageHeight * scale
+                story.append(Paragraph(self._escape(url), styles["body_bold"]))
+                story.append(img)
+                story.append(Spacer(1, 0.4*cm))
+            except Exception as e:
+                log_warn(f"Could not embed screenshot {path}: {e}")
+
+        return story
+
     def _osint(self, styles):
         story = [Paragraph("OSINT — Passive Reconnaissance", styles["h1"])]
 
@@ -525,7 +643,8 @@ class PDFReport:
         return story
 
     def _ai_section(self, styles):
-        story = [Paragraph("AI-Assisted Analysis (Gemini)", styles["h1"])]
+        provider_label = (self.state.ai_provider_used or "AI").title()
+        story = [Paragraph(f"AI-Assisted Analysis ({provider_label})", styles["h1"])]
         story.append(Paragraph(self.state.ai_summary, styles["body"]))
 
         if self.state.ai_cves:
@@ -540,19 +659,17 @@ class PDFReport:
             for v in self.state.ai_vectors:
                 story.append(Paragraph(f"• {v}", styles["body"]))
 
-        # Manual validation commands if present
-        ai_file = self.state.output_dir / "ai_analysis.json"
-        if ai_file.exists():
-            try:
-                data = json.loads(ai_file.read_text())
-                cmds = data.get("manual_validation", [])
-                if cmds:
-                    story.append(Spacer(1, 0.2*cm))
-                    story.append(Paragraph("Recommended Manual Validation", styles["h2"]))
-                    for cmd in cmds:
-                        story.append(Paragraph(cmd, styles["code"]))
-            except Exception:
-                pass
+        if self.state.ai_priority_targets:
+            story.append(Spacer(1, 0.2*cm))
+            story.append(Paragraph("Priority Targets", styles["h2"]))
+            for t in self.state.ai_priority_targets:
+                story.append(Paragraph(f"• {t}", styles["body"]))
+
+        if self.state.ai_manual_validation:
+            story.append(Spacer(1, 0.2*cm))
+            story.append(Paragraph("Recommended Manual Validation", styles["h2"]))
+            for cmd in self.state.ai_manual_validation:
+                story.append(Paragraph(self._escape(cmd), styles["code"]))
 
         story.append(Spacer(1, 0.4*cm))
         return story
