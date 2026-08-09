@@ -35,14 +35,14 @@ class SMBModule(BaseModule):
         self._print_smb_summary()
 
     def _run_enum4linux(self):
-        if not self.tool_exists("enum4linux-ng"):
+        if not self.tool_exists(self.tool("enum4linux")):
             log_warn("enum4linux-ng not found")
             return
 
         out_file = self.smb_dir / "enum4linux.txt"
         json_base = str(self.smb_dir / "enum4linux")
 
-        cmd = ["enum4linux-ng", "-A", "-oJ", json_base, self.state.target]
+        cmd = [self.tool("enum4linux"), "-A", "-oJ", json_base, self.state.target]
         self.run_command(cmd, output_file=out_file, timeout=300, silent=True)
 
         json_out = Path(json_base + ".json")
@@ -52,12 +52,12 @@ class SMBModule(BaseModule):
         self.state.add_artifact("enum4linux_txt", out_file)
 
     def run_netexec(self, choice: str = "1"):
-        if not self.tool_exists("netexec"):
+        if not self.tool_exists(self.tool("netexec")):
             return
 
         if choice == "1":
             out_file = self.smb_dir / "netexec_anon.txt"
-            cmd = ["netexec", "smb", self.state.target, "-u", "", "-p", ""]
+            cmd = [self.tool("netexec"), "smb", self.state.target, "-u", "", "-p", ""]
             output = self.run_command(cmd, output_file=out_file, timeout=60, silent=True)
             if output:
                 if "Signing:" in output:
@@ -66,7 +66,7 @@ class SMBModule(BaseModule):
 
         elif choice == "2":
             out_file = self.smb_dir / "netexec_shares.txt"
-            cmd = ["netexec", "smb", self.state.target, "-u", "", "-p", "", "--shares"]
+            cmd = [self.tool("netexec"), "smb", self.state.target, "-u", "", "-p", "", "--shares"]
             output = self.run_command(cmd, output_file=out_file, timeout=60, silent=True)
             if output:
                 shares = self._parse_shares(output)
@@ -75,7 +75,7 @@ class SMBModule(BaseModule):
 
         elif choice == "3":
             out_file = self.smb_dir / "netexec_rid.txt"
-            cmd = ["netexec", "smb", self.state.target, "-u", "", "-p", "", "--rid-brute"]
+            cmd = [self.tool("netexec"), "smb", self.state.target, "-u", "", "-p", "", "--rid-brute"]
             output = self.run_command(cmd, output_file=out_file, timeout=120, silent=True)
             if output:
                 users = self._parse_rid_users(output)

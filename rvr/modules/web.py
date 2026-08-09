@@ -56,12 +56,12 @@ class WebModule(BaseModule):
         console.print(f"  [green]✓[/green]  {name}  [dim]({elapsed_str})[/dim]")
 
     def run_whatweb(self, base_url: Optional[str] = None):
-        if not self.tool_exists("whatweb"):
+        if not self.tool_exists(self.tool("whatweb")):
             return
         if not base_url:
             base_url = self._default_url()
         out_file = self.web_dir / "whatweb.txt"
-        cmd = ["whatweb", "--color=never", "-a", "3", base_url]
+        cmd = [self.tool("whatweb"), "--color=never", "-a", "3", base_url]
         output = self.run_command(cmd, output_file=out_file, timeout=60, silent=True)
         if output:
             techs = self._parse_whatweb(output)
@@ -71,20 +71,22 @@ class WebModule(BaseModule):
     def run_ffuf(
         self,
         url: Optional[str] = None,
-        wordlist: str = "/usr/share/seclists/Discovery/Web-Content/common.txt",
+        wordlist: Optional[str] = None,
         extensions: str = "",
         extra_flags: str = "",
     ):
-        if not self.tool_exists("ffuf"):
+        if not self.tool_exists(self.tool("ffuf")):
             return
         if not url:
             url = f"{self._default_url()}/FUZZ"
+        if not wordlist:
+            wordlist = self.config.wordlist("web_common") or "/usr/share/seclists/Discovery/Web-Content/common.txt"
 
         safe_url = url.replace("://", "_").replace("/", "_").replace(":", "_")
         out_file = self.web_dir / f"ffuf_{safe_url[:50]}.json"
 
         cmd = [
-            "ffuf", "-u", url,
+            self.tool("ffuf"), "-u", url,
             "-w", wordlist,
             "-o", str(out_file), "-of", "json",
             "-rate", str(self.profile["ffuf_rate"]),
@@ -105,16 +107,17 @@ class WebModule(BaseModule):
             self.state.add_artifact(f"ffuf_{safe_url[:30]}", out_file)
 
     def run_gobuster(self, base_url: Optional[str] = None) -> int:
-        if not self.tool_exists("gobuster"):
+        if not self.tool_exists(self.tool("gobuster")):
             return 0
         if not base_url:
             base_url = self._default_url()
 
+        wordlist = self.config.wordlist("web_medium") or "/usr/share/seclists/Discovery/Web-Content/big.txt"
         out_file = self.web_dir / "gobuster.txt"
         cmd = [
-            "gobuster", "dir",
+            self.tool("gobuster"), "dir",
             "-u", base_url,
-            "-w", "/usr/share/seclists/Discovery/Web-Content/big.txt",
+            "-w", wordlist,
             "-o", str(out_file),
             "-q", "-t", "50", "--no-error",
             "-b", "404,429",
@@ -145,7 +148,7 @@ class WebModule(BaseModule):
         return count
 
     def run_nuclei(self, target: Optional[str] = None, choice: str = "1"):
-        if not self.tool_exists("nuclei"):
+        if not self.tool_exists(self.tool("nuclei")):
             return
         if not target:
             target = self._default_url()
@@ -154,7 +157,7 @@ class WebModule(BaseModule):
         out_file = self.web_dir / f"nuclei_{safe[:50]}.json"
 
         cmd = [
-            "nuclei", "-u", target,
+            self.tool("nuclei"), "-u", target,
             "-o", str(out_file),
             "-json", "-silent", "-no-color",
         ]
@@ -173,7 +176,7 @@ class WebModule(BaseModule):
 
     def run_screenshot(self, url: Optional[str] = None):
         """Capture a screenshot of the target web port via gowitness (v3 CLI)."""
-        if not self.tool_exists("gowitness"):
+        if not self.tool_exists(self.tool("gowitness")):
             return
         if not url:
             url = self._default_url()
@@ -183,7 +186,7 @@ class WebModule(BaseModule):
         jsonl_file = self.web_dir / f"gowitness_{safe[:50]}.jsonl"
 
         cmd = [
-            "gowitness", "scan", "single",
+            self.tool("gowitness"), "scan", "single",
             "--url", url,
             "--screenshot-path", str(shots_dir),
             "--write-jsonl",

@@ -21,7 +21,7 @@ class LDAPModule(BaseModule):
         self.ldap_dir = self.ensure_dir("ldap")
 
     def run(self):
-        if not self.tool_exists("ldapsearch"):
+        if not self.tool_exists(self.tool("ldapsearch")):
             log_warn("ldapsearch not found (install ldap-utils)")
             return
 
@@ -32,7 +32,7 @@ class LDAPModule(BaseModule):
         t0 = datetime.now()
 
         rootdse_file = self.ldap_dir / "rootdse.txt"
-        cmd = ["ldapsearch", "-x", "-H", uri, "-s", "base", "-b", "", "(objectClass=*)", "+"]
+        cmd = [self.tool("ldapsearch"), "-x", "-H", uri, "-s", "base", "-b", "", "(objectClass=*)", "+"]
         output = self.run_command(cmd, output_file=rootdse_file, timeout=30, silent=True) or ""
         elapsed = (datetime.now() - t0).seconds
 
@@ -73,7 +73,7 @@ class LDAPModule(BaseModule):
 
         out_file = self.ldap_dir / "anon_enum.txt"
         cmd = [
-            "ldapsearch", "-x", "-H", uri, "-b", base,
+            self.tool("ldapsearch"), "-x", "-H", uri, "-b", base,
             "(|(objectClass=user)(objectClass=group))",
             "sAMAccountName", "objectClass",
         ]

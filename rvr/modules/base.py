@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any
 
 from rvr.utils.console import log_warn, log_error
 from rvr.utils.state import RVRState
+from rvr.utils.config import get_config
 
 
 class BaseModule:
@@ -17,6 +18,14 @@ class BaseModule:
         self.state = state
         self.profile = profile
         self.output_dir = state.output_dir
+        self.config = get_config()
+
+    def tool(self, key: str) -> str:
+        """Resolve a logical tool key (e.g. 'enum4linux') to the actual
+        binary name from config.yaml — falls back to the key itself if
+        unconfigured. Use this instead of hardcoding binary names in
+        run_command()/tool_exists() calls."""
+        return self.config.tool(key)
 
     def tool_exists(self, tool: str) -> bool:
         return shutil.which(tool) is not None

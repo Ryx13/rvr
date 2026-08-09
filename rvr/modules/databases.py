@@ -42,7 +42,7 @@ class DatabaseModule(BaseModule):
         self.db_dir = self.ensure_dir("databases")
 
     def run(self):
-        if not self.tool_exists("nmap"):
+        if not self.tool_exists(self.tool("nmap")):
             log_warn("nmap not found — cannot probe databases")
             return
 
@@ -66,7 +66,7 @@ class DatabaseModule(BaseModule):
 
             out_file = self.db_dir / f"{name}.txt"
             cmd = [
-                "nmap", "-p", str(port),
+                self.tool("nmap"), "-p", str(port),
                 "--script", NSE_SCRIPTS[port],
                 self.state.target,
             ]

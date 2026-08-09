@@ -63,7 +63,7 @@ class NetworkModule(BaseModule):
         xml_out = self.net_dir / "quick_scan.xml"
 
         cmd = [
-            "nmap", "-p", ports,
+            self.tool("nmap"), "-p", ports,
             f"-T{self.profile['nmap_timing']}",
             "--open", "-oX", str(xml_out),
             "-n", "--min-rate", "1000",
@@ -86,7 +86,7 @@ class NetworkModule(BaseModule):
         nmap_out = self.net_dir / "scan.nmap"
 
         cmd = [
-            "nmap", "-p", port_str,
+            self.tool("nmap"), "-p", port_str,
             "-sV", "-sC",
             f"-T{self.profile['nmap_timing']}",
             "-oX", str(xml_out),
@@ -205,7 +205,7 @@ class NetworkModule(BaseModule):
         nmap_out = self.net_dir / "udp_scan.nmap"
 
         cmd = [
-            "nmap", "-sU",
+            self.tool("nmap"), "-sU",
             "--top-ports", str(top_ports),
             f"-T{self.profile['nmap_timing']}",
             "-oX", str(xml_out),

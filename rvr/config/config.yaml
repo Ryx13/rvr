@@ -9,6 +9,7 @@ wordlists:
 tools:
   nmap: nmap
   ffuf: ffuf
+  gobuster: gobuster
   subfinder: subfinder
   nuclei: nuclei
   enum4linux: enum4linux-ng
@@ -17,6 +18,7 @@ tools:
   snmpwalk: snmpwalk
   whatweb: whatweb
   showmount: showmount
+  rpcinfo: rpcinfo
   theharvester: theHarvester
   gowitness: gowitness
   ldapsearch: ldapsearch
@@ -27,15 +29,17 @@ concurrency:
 
 profiles:
   stealth:
-    nmap_timing: T1
+    # NOTE: bare digit, not "T1" — network.py builds the flag itself as
+    # f"-T{nmap_timing}", so a "T" prefix here would produce an invalid "-TT1"
+    nmap_timing: "1"
     nmap_flags: "-sS --scan-delay 2s"
     ffuf_rate: 10
   normal:
-    nmap_timing: T3
+    nmap_timing: "3"
     nmap_flags: "-sS -sV -sC"
     ffuf_rate: 100
   aggressive:
-    nmap_timing: T4
+    nmap_timing: "4"
     nmap_flags: "-sS -sV -sC -A"
     ffuf_rate: 500
 

@@ -12,13 +12,13 @@ class NFSModule(BaseModule):
         self.nfs_dir = self.ensure_dir("nfs")
 
     def run(self):
-        if not self.tool_exists("showmount"):
+        if not self.tool_exists(self.tool("showmount")):
             log_warn("showmount not found")
             return
         console.print("  [cyan]○[/cyan]  NFS mount enumeration...", end="\r")
         t0 = datetime.now()
         out_file = self.nfs_dir / "showmount.txt"
-        output = self.run_command(["showmount", "-e", self.state.target],
+        output = self.run_command([self.tool("showmount"), "-e", self.state.target],
                                    output_file=out_file, timeout=30, silent=True)
         elapsed = (datetime.now() - t0).seconds
         if output:
@@ -32,6 +32,6 @@ class NFSModule(BaseModule):
         else:
             console.print(f"  [dim]✗  NFS — no response[/dim]")
         rpc_out = self.nfs_dir / "rpcinfo.txt"
-        self.run_command(["rpcinfo", "-p", self.state.target],
+        self.run_command([self.tool("rpcinfo"), "-p", self.state.target],
                          output_file=rpc_out, timeout=30, silent=True)
         self.state.add_artifact("rpcinfo", rpc_out)

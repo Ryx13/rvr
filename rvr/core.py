@@ -10,32 +10,23 @@ from typing import Callable
 
 from rvr.utils.console import console, log_info, log_success, log_warn, log_error, log_section
 from rvr.utils.state import RVRState
+from rvr.utils.config import get_config
 
-
-# Profile settings
-PROFILES = {
-    "stealth": {
-        "nmap_timing": "1",
-        "nmap_flags": "-sS --scan-delay 2s",
-        "ffuf_rate": 10,
-    },
-    "normal": {
-        "nmap_timing": "3",
-        "nmap_flags": "-sS -sV -sC",
-        "ffuf_rate": 100,
-    },
-    "aggressive": {
-        "nmap_timing": "4",
-        "nmap_flags": "-sS -sV -sC -A",
-        "ffuf_rate": 500,
-    },
-}
+# Profile settings — sourced from config.yaml (rvr/config/config.yaml or
+# --config / RVR_CONFIG override), falling back to built-in defaults if the
+# file is missing or a profile isn't defined there. Kept as a module-level
+# name for backward compatibility with anything importing PROFILES directly.
+PROFILES = get_config().profiles
 
 
 class RVRCore:
     def __init__(self, state: RVRState):
         self.state = state
-        self.profile = PROFILES[state.profile]
+        self.config = get_config()
+        profiles = self.config.profiles
+        if state.profile not in profiles:
+            log_warn(f"Profile '{state.profile}' not found in config — falling back to 'normal'")
+        self.profile = profiles.get(state.profile, profiles.get("normal", PROFILES["normal"]))
         self.start_time = datetime.now()
 
     # ── Full suite mode ────────────────────────────────────────────
@@ -211,9 +202,10 @@ class RVRCore:
     def _micro_ffuf(self):
         console.print("[cyan]ffuf options:[/cyan]")
         url = input("Target URL (e.g. http://10.10.11.1/FUZZ): ").strip()
+        default_wordlist = self.config.wordlist("web_common") or "/usr/share/seclists/Discovery/Web-Content/common.txt"
         wordlist = input(
-            f"Wordlist [default: /usr/share/seclists/Discovery/Web-Content/common.txt]: "
-        ).strip() or "/usr/share/seclists/Discovery/Web-Content/common.txt"
+            f"Wordlist [default: {default_wordlist}]: "
+        ).strip() or default_wordlist
         extensions = input("Extensions (e.g. php,html,txt) [blank for none]: ").strip()
 
         from rvr.modules.web import WebModule

@@ -22,12 +22,12 @@ class RDPModule(BaseModule):
         self.rdp_dir = self.ensure_dir("rdp")
 
     def run(self):
-        if self.tool_exists("nmap"):
+        if self.tool_exists(self.tool("nmap")):
             self._run_nmap_scripts()
         else:
             log_warn("nmap not found — skipping RDP NSE probes")
 
-        if self.tool_exists("netexec"):
+        if self.tool_exists(self.tool("netexec")):
             self._run_netexec()
 
         self._print_summary()
@@ -38,7 +38,7 @@ class RDPModule(BaseModule):
 
         out_file = self.rdp_dir / "nmap_rdp.txt"
         cmd = [
-            "nmap", "-p", "3389",
+            self.tool("nmap"), "-p", "3389",
             "--script", "rdp-ntlm-info,rdp-enum-encryption",
             self.state.target,
         ]
@@ -79,7 +79,7 @@ class RDPModule(BaseModule):
         t0 = datetime.now()
 
         out_file = self.rdp_dir / "netexec_rdp.txt"
-        cmd = ["netexec", "rdp", self.state.target]
+        cmd = [self.tool("netexec"), "rdp", self.state.target]
         output = self.run_command(cmd, output_file=out_file, timeout=30, silent=True) or ""
         elapsed = (datetime.now() - t0).seconds
         self.state.add_artifact("rdp_netexec", out_file)

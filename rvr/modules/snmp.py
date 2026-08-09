@@ -17,7 +17,7 @@ class SNMPModule(BaseModule):
         self.snmp_dir = self.ensure_dir("snmp")
 
     def run(self):
-        if not self.tool_exists("snmpwalk"):
+        if not self.tool_exists(self.tool("snmpwalk")):
             log_warn("snmpwalk not found")
             return
 
@@ -26,7 +26,7 @@ class SNMPModule(BaseModule):
             console.print(f"  [cyan]○[/cyan]  SNMP community '{community}'...", end="\r")
             t0 = datetime.now()
             out_file = self.snmp_dir / f"snmpwalk_{community}.txt"
-            cmd = ["snmpwalk", "-v2c", "-c", community, self.state.target]
+            cmd = [self.tool("snmpwalk"), "-v2c", "-c", community, self.state.target]
             output = self.run_command(cmd, output_file=out_file, timeout=60, silent=True)
             elapsed = (datetime.now() - t0).seconds
 

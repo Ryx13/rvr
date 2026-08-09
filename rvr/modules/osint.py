@@ -40,10 +40,10 @@ class OSINTModule(BaseModule):
         console.print(f"  [green]✓[/green]  {name}  [dim]({elapsed}s)[/dim]")
 
     def run_subfinder(self):
-        if not self.tool_exists("subfinder"):
+        if not self.tool_exists(self.tool("subfinder")):
             return
         out_file = self.passive_dir / "subdomains.txt"
-        cmd = ["subfinder", "-d", self.state.target, "-o", str(out_file), "-silent"]
+        cmd = [self.tool("subfinder"), "-d", self.state.target, "-o", str(out_file), "-silent"]
         self.run_command(cmd, timeout=120, silent=True)
         if out_file.exists():
             with open(out_file) as f:
@@ -73,11 +73,11 @@ class OSINTModule(BaseModule):
             log_warn(f"crt.sh failed: {e}")
 
     def _run_theharvester(self):
-        if not self.tool_exists("theHarvester"):
+        if not self.tool_exists(self.tool("theharvester")):
             return
         out_file = self.passive_dir / "harvester.xml"
         cmd = [
-            "theHarvester", "-d", self.state.target,
+            self.tool("theharvester"), "-d", self.state.target,
             "-b", "google,bing,duckduckgo",
             "-f", str(out_file),
         ]

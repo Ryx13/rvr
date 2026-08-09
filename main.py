@@ -17,6 +17,7 @@ from rvr.utils.console import console, print_banner
 from rvr.utils.state import RVRState
 from rvr.utils.validator import validate_target
 from rvr.utils.network_info import get_attacker_ip
+from rvr.utils.config import get_config
 from rvr.core import RVRCore
 
 
@@ -62,7 +63,14 @@ Examples:
     parser.add_argument(
         "-o", "--output",
         metavar="DIR",
-        help="Override output directory (default: ~/rvr_loot/<target>)"
+        help="Override output directory (default: <config output.base_dir>/<target>, "
+             "normally ~/rvr_loot/<target>)"
+    )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help="Path to a config.yaml to use instead of the bundled default "
+             "(env var RVR_CONFIG also works)"
     )
     parser.add_argument(
         "--skip",
@@ -83,7 +91,10 @@ Examples:
     )
     parser.add_argument("--ports",      metavar="PORTS",     help="Override port range (e.g. --ports 1-65535)")
     parser.add_argument("--udp", action="store_true", help="Include UDP scan (top 200 ports)")
-    parser.add_argument("--threads",    type=int, default=4, metavar="N", help="Max concurrent threads (default: 4)")
+    parser.add_argument(
+        "--threads", type=int, default=None, metavar="N",
+        help="Max concurrent threads (default: config.yaml's concurrency.max_workers, normally 4)"
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("--version",    action="version", version="RVR v1.0.0")
 
@@ -93,6 +104,12 @@ Examples:
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    # Load config first — everything below can rely on it. --config (or
+    # RVR_CONFIG) overrides the bundled rvr/config/config.yaml; a missing
+    # or invalid file falls back to built-in defaults with a warning,
+    # rather than crashing startup.
+    config = get_config(args.config)
 
     # Print banner
     print_banner()
@@ -108,7 +125,7 @@ def main():
         output_dir = Path(args.output)
     else:
         safe_target = args.target.replace("/", "_").replace(":", "_")
-        output_dir = Path.home() / "rvr_loot" / safe_target
+        output_dir = config.base_output_dir() / safe_target
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -118,6 +135,8 @@ def main():
         skip.add("ai")
     if args.no_report:
         skip.add("report")
+
+    threads = args.threads if args.threads is not None else config.concurrency.get("max_workers", 4)
 
     # Capture attacker IP (tun0 for VPN, fallback to wlan0)
     atk_ip, atk_iface = get_attacker_ip()
@@ -130,7 +149,7 @@ def main():
         output_dir=output_dir,
         skip=skip,
         verbose=args.verbose,
-        threads=args.threads,
+        threads=threads,
         port_override=args.ports,
         tool=args.tool,
         no_discord=args.no_discord,
