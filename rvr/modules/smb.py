@@ -5,10 +5,10 @@ RVR — SMB module v2
 import json
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 
 from rvr.modules.base import BaseModule
-from rvr.utils.console import log_info, log_success, log_warn, log_error, console
+from rvr.utils.console import log_warn, console
 from rvr.utils.state import RVRState
 
 
@@ -83,7 +83,6 @@ class SMBModule(BaseModule):
             self.state.add_artifact("netexec_rid", out_file)
 
     def _print_smb_summary(self):
-        from rich.table import Table
         smb = self.state.smb_findings
         if not smb:
             return

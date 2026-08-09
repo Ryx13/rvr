@@ -2,16 +2,13 @@
 RVR — OSINT module v2
 """
 
-import re
-import json
 import requests
 import xml.etree.ElementTree as ET
-from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime
 
 from rvr.modules.base import BaseModule
-from rvr.utils.console import log_info, log_success, log_warn, console
+from rvr.utils.console import log_warn, console
 from rvr.utils.state import RVRState
 
 

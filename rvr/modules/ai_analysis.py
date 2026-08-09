@@ -5,13 +5,12 @@ see ai_providers.py) for CVE correlation and attack-path suggestions.
 """
 
 import json
-from typing import Optional
 
 from dotenv import load_dotenv
 
 from rvr.modules.base import BaseModule
 from rvr.modules.ai_providers import get_provider
-from rvr.utils.console import log_info, log_success, log_warn, log_error
+from rvr.utils.console import log_info, log_success, log_warn
 from rvr.utils.state import RVRState
 
 load_dotenv()

@@ -6,7 +6,6 @@ Comprehensive, shows all findings properly
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Optional
 
 from rvr.utils.console import log_info, log_success, log_warn, log_error
 from rvr.utils.state import RVRState
@@ -14,13 +13,12 @@ from rvr.utils.state import RVRState
 try:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import mm, cm
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-        HRFlowable, PageBreak, KeepTogether, Image
+        PageBreak, Image
     )
-    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
     REPORTLAB_OK = True
 except ImportError:
     REPORTLAB_OK = False
@@ -458,6 +456,15 @@ class PDFReport:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("LEFTPADDING",   (0, 0), (-1, -1), 6),
         ]
+        # Color the severity cell in each data row so Critical/High findings
+        # actually stand out — previously this map was built and discarded.
+        for row_idx, f in enumerate(sorted_findings[:50], start=1):
+            sev = f.get("info", {}).get("severity", "unknown").upper()
+            color = sev_colors_map.get(sev)
+            if color:
+                style_list.append(("TEXTCOLOR", (0, row_idx), (0, row_idx), color))
+                style_list.append(("FONTNAME", (0, row_idx), (0, row_idx), "Helvetica-Bold"))
+
         t.setStyle(TableStyle(style_list))
         story.append(t)
         story.append(Spacer(1, 0.4*cm))

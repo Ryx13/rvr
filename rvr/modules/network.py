@@ -7,12 +7,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, Any, List
 import os
-import time
 
 from rich.table import Table
 
 from rvr.modules.base import BaseModule
-from rvr.utils.console import log_info, log_success, log_warn, log_error, console
+from rvr.utils.console import log_warn, console
 from rvr.utils.state import RVRState
 
 
@@ -229,4 +228,4 @@ class NetworkModule(BaseModule):
             else:
                 console.print(f"  [dim]✓  UDP — no open ports  ({elapsed_str})[/dim]")
         else:
-            console.print(f"  [yellow]⚠[/yellow]  UDP scan failed")
+            console.print("  [yellow]⚠[/yellow]  UDP scan failed")

@@ -7,7 +7,7 @@ import os
 import json
 import requests
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from dotenv import load_dotenv
 from rvr.utils.console import log_info, log_success, log_warn, log_error

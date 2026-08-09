@@ -8,13 +8,9 @@ import threading
 from typing import Optional, List, TYPE_CHECKING
 
 from rich.console import Console
-from rich.text import Text
-from rich.rule import Rule
 from rich.panel import Panel
 from rich.table import Table
 from rich.box import ROUNDED, SIMPLE
-from contextlib import contextmanager
-from datetime import datetime
 
 if TYPE_CHECKING:
     from rvr.utils.state import RVRState

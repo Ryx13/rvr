@@ -6,12 +6,11 @@ Uses Python's stdlib ftplib — no external binary required.
 
 import socket
 import ftplib
-from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime
 
 from rvr.modules.base import BaseModule
-from rvr.utils.console import log_success, log_warn, console
+from rvr.utils.console import log_warn, console
 from rvr.utils.state import RVRState
 
 

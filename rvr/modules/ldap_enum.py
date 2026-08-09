@@ -6,12 +6,11 @@ anonymous user/group enumeration pass if the bind succeeds. Uses `ldapsearch`
 """
 
 import re
-from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime
 
 from rvr.modules.base import BaseModule
-from rvr.utils.console import log_success, log_warn, console
+from rvr.utils.console import log_warn, console
 from rvr.utils.state import RVRState
 
 

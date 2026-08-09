@@ -1,6 +1,5 @@
 """RVR — NFS module"""
-from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime
 from rvr.modules.base import BaseModule
 from rvr.utils.console import log_success, log_warn, console
@@ -30,7 +29,7 @@ class NFSModule(BaseModule):
                     log_success(f"  Mount: {m}")
             self.state.add_artifact("nfs_mounts", out_file)
         else:
-            console.print(f"  [dim]✗  NFS — no response[/dim]")
+            console.print("  [dim]✗  NFS — no response[/dim]")
         rpc_out = self.nfs_dir / "rpcinfo.txt"
         self.run_command([self.tool("rpcinfo"), "-p", self.state.target],
                          output_file=rpc_out, timeout=30, silent=True)

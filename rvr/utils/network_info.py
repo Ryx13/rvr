@@ -4,7 +4,6 @@ Captures attacker IP from tun0 (VPN) or falls back to wlan0/eth0
 """
 
 import subprocess
-import socket
 from typing import Optional, Tuple
 
 

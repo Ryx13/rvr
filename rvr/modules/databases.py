@@ -11,7 +11,6 @@ detection (already captured by the network module), so it's recorded as
 "detected — needs manual credential testing" rather than actively probed.
 """
 
-from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
 

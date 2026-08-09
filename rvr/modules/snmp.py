@@ -2,12 +2,11 @@
 RVR — SNMP module v2
 """
 
-from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime
 
 from rvr.modules.base import BaseModule
-from rvr.utils.console import log_info, log_success, log_warn, console
+from rvr.utils.console import log_warn, console
 from rvr.utils.state import RVRState
 
 

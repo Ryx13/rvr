@@ -13,7 +13,7 @@ from collections import Counter
 from rich.table import Table
 
 from rvr.modules.base import BaseModule
-from rvr.utils.console import log_info, log_success, log_warn, log_error, console
+from rvr.utils.console import log_info, log_success, log_warn, console
 from rvr.utils.state import RVRState
 
 
