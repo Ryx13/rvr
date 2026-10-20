@@ -7,7 +7,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
-from rich.prompt import Prompt, IntPrompt
+from rich.prompt import Prompt, IntPrompt, Confirm
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
 
 from rvr.utils.console import (
@@ -52,6 +52,11 @@ class RVRCore:
         # Phase 3 — Conditional modules based on open ports
         if s.open_ports:
             self._run_conditional_phases()
+
+        # Phase 3.5 — HTB / CPTS workflow (hostname -> /etc/hosts -> notes)
+        if s.htb_mode and s.target_type == "ip":
+            log_section("Phase 3.5 — HTB Workflow")
+            self._run_module("htb", self._phase_htb, always=True)
 
         # Phase 4 — AI analysis
         if "ai" not in s.skip:
@@ -163,9 +168,15 @@ class RVRCore:
         from rvr.modules.ai_analysis import AIModule
         AIModule(self.state).run()
 
+    def _phase_htb(self):
+        from rvr.modules.htb import HTBModule
+        HTBModule(self.state, self.profile).run_htb_flow(interactive=True)
+
     def _phase_report(self):
         from rvr.output.pdf_report import PDFReport
         PDFReport(self.state).generate()
+        from rvr.output.markdown_report import MarkdownReport
+        MarkdownReport(self.state).generate()
 
     def _phase_discord(self):
         from rvr.output.discord_notify import DiscordNotifier
@@ -189,6 +200,12 @@ class RVRCore:
             "ftp":        self._micro_ftp,
             "ldapsearch": self._micro_ldapsearch,
             "rdp":        self._micro_rdp,
+            "kerberos":   self._micro_kerberos,
+            "bloodhound": self._micro_bloodhound,
+            "searchsploit": self._micro_searchsploit,
+            "vhosts":     self._micro_vhosts,
+            "pivot":      self._micro_pivot,
+            "spray":      self._micro_spray,
         }
 
         fn = micro_map.get(tool)
@@ -280,3 +297,63 @@ class RVRCore:
     def _micro_rdp(self):
         from rvr.modules.rdp import RDPModule
         RDPModule(self.state, self.profile).run()
+
+    # ── Micro-variant: CPTS / AD toolkit ─────────────────────────
+    def _micro_kerberos(self):
+        from rvr.modules.kerberos import KerberosModule
+        console.print("[cyan]Kerberos options:[/cyan]")
+        console.print("  [1] Full pass — Kerbrute + AS-REP roast (no creds needed)")
+        console.print("  [2] Kerberoast — needs credentials (SPN service account hashes)")
+        choice = IntPrompt.ask("Select", choices=["1", "2"], default=1)
+        mod = KerberosModule(self.state, self.profile)
+        if choice == 1:
+            mod.run()
+        else:
+            creds = Prompt.ask("Credentials (user:pass)")
+            mod.run_kerberoast(creds)
+
+    def _micro_bloodhound(self):
+        from rvr.modules.bloodhound import BloodHoundModule
+        BloodHoundModule(self.state, self.profile).run()
+
+    def _micro_searchsploit(self):
+        from rvr.modules.exploits import ExploitModule
+        if not self.state.open_ports:
+            log_info("No services in state yet — run an nmap scan first (`rvr --tool nmap -t TARGET`)")
+            return
+        ExploitModule(self.state, self.profile).run()
+
+    def _micro_vhosts(self):
+        from rvr.modules.web import WebModule
+        mod = WebModule(self.state, self.profile)
+        web_ports = self.state.get_web_ports()
+        if not web_ports:
+            log_info("No web ports in state yet — run an nmap scan first")
+            return
+        port = web_ports[0]
+        proto = "https" if port in [443, 8443] else "http"
+        base_url = Prompt.ask("Base URL", default=f"{proto}://{self.state.target}:{port}")
+        mod.run_vhost_fuzz(base_url)
+
+    def _micro_pivot(self):
+        from rvr.modules.htb import HTBModule
+        HTBModule(self.state, self.profile).generate_pivot_commands()
+
+    def _micro_spray(self):
+        """Opt-in password spray via NetExec. Deliberately interactive and
+        loud about lockout risk — this is the one micro command that can
+        disrupt a target, so it never runs from the automated pipeline."""
+        console.print("[bold red]⚠  Password spraying can lock out accounts.[/bold red]")
+        console.print("[dim]Use a single password across many users, ideally outside business hours / "
+                      "with a lockout-aware policy. One password, many users — never many "
+                      "passwords against one user.[/dim]")
+        if not Confirm.ask("Proceed?", default=False):
+            return
+
+        from rich.prompt import Prompt
+        users_path = Prompt.ask("User list file (one per line)", default="users.txt")
+        password = Prompt.ask("Password to spray")
+        proto = Prompt.ask("Protocol", choices=["smb", "winrm", "ldap", "mssql"], default="smb")
+
+        from rvr.modules.smb import SMBModule
+        SMBModule(self.state, self.profile).run_netexec_spray(proto, users_path, password)

@@ -21,3 +21,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Synthetic smoke-test artifacts (tests/test_synthetic_report.py) — root-level
+# scratch dir only; the leading slash keeps it from matching rvr/output/,
+# which is tracked source code.
+/output/

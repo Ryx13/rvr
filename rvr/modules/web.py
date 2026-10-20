@@ -1,6 +1,8 @@
 """
-RVR — Web module v3
-Auto-filters redirect noise, clean status display, gobuster + ffuf
+RVR — Web module v4
+Auto-filters redirect noise, clean status display, gobuster + ffuf,
+SSL certificate mining (SAN hostnames), vHost fuzzing, API endpoint
+probing, and a second extension-based ffuf pass on non-stealth profiles.
 """
 
 import json
@@ -10,11 +12,21 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from collections import Counter
 
+import requests
 from rich.table import Table
 
 from rvr.modules.base import BaseModule
 from rvr.utils.console import log_info, log_success, log_warn, console
 from rvr.utils.state import RVRState
+
+# Common API / documentation endpoints worth a cheap direct probe —
+# catches Swagger/OpenAPI/GraphQL surfaces that directory wordlists miss.
+API_PATHS = [
+    "/api", "/api/v1", "/api/v2", "/api/swagger", "/api/docs",
+    "/swagger", "/swagger.json", "/swagger-ui", "/swagger-ui.html",
+    "/openapi.json", "/api/openapi.json", "/docs", "/api-docs",
+    "/graphql", "/graphiql", "/actuator", "/api/config",
+]
 
 
 class WebModule(BaseModule):
@@ -36,8 +48,13 @@ class WebModule(BaseModule):
             console.print()
 
             self._run_step("WhatWeb fingerprinting", self.run_whatweb, base_url)
+            if proto == "https":
+                self._run_step("SSL certificate mining", self.run_ssl_cert, base_url)
             self._run_step("Screenshot capture", self.run_screenshot, base_url)
+            self._run_step("API endpoint probing", self.run_api_probe, base_url)
             self._run_step("ffuf directory fuzzing", self.run_ffuf, f"{base_url}/FUZZ")
+            self._run_step("ffuf extension fuzzing", self.run_extension_ffuf, base_url)
+            self._run_step("vHost discovery", self.run_vhost_fuzz, base_url)
             self._run_step("Gobuster brute-force", self.run_gobuster, base_url)
             self._run_step("Nuclei vulnerability scan", self.run_nuclei, base_url)
 
@@ -173,6 +190,156 @@ class WebModule(BaseModule):
             findings = self._parse_nuclei_json(out_file)
             self.state.nuclei_findings.extend(findings)
             self.state.add_artifact(f"nuclei_{safe[:30]}", out_file)
+
+    # ── SSL certificate mining ─────────────────────────────────
+    def run_ssl_cert(self, url: str):
+        """Pull the server certificate via openssl and mine it for the
+        Subject CN, SAN hostnames, issuer and validity window. SAN entries
+        on HTB-style targets frequently reveal the machine's real hostname —
+        the single most useful value for the /etc/hosts workflow."""
+        if not self.tool_exists(self.tool("openssl")):
+            return
+
+        host = self.state.target
+        port = url.rsplit(":", 1)[-1]
+        out_file = self.web_dir / f"ssl_cert_{host}_{port}.txt"
+
+        # -status avoids a hanging OCSP fetch; timeout keeps slow TLS stacks from stalling the phase
+        cmd = [
+            "bash", "-c",
+            f"echo | timeout 15 {self.tool('openssl')} s_client -connect {host}:{port} "
+            f"-servername {host} 2>/dev/null "
+            f"| {self.tool('openssl')} x509 -noout -text 2>/dev/null"
+        ]
+        output = self.run_command(cmd, output_file=out_file, timeout=30, silent=True) or ""
+        if not output.strip() or "Certificate" not in output:
+            return
+
+        cert: Dict[str, Any] = {"port": int(port), "url": url}
+
+        subject = re.search(r"Subject:\s*(.+)", output)
+        if subject:
+            cert["subject"] = subject.group(1).strip()
+            cn = re.search(r"CN\s*=\s*([^,\n]+)", subject.group(1))
+            if cn:
+                cert["cn"] = cn.group(1).strip()
+
+        issuer = re.search(r"Issuer:\s*(.+)", output)
+        if issuer:
+            cert["issuer"] = issuer.group(1).strip()
+
+        san = re.search(r"Subject Alternative Name[^\n]*\n?\s*(.+)", output)
+        if san:
+            entries = [e.strip() for e in re.split(r"[,\n]", san.group(1)) if ":" in e]
+            cert["san"] = [e.split(":", 1)[1].strip() for e in entries]
+
+        valid = re.search(r"Not After\s*:\s*(.+)", output)
+        if valid:
+            cert["valid_to"] = valid.group(1).strip()
+
+        if len(cert) > 2:
+            self.state.ssl_certs.append(cert)
+            self.state.add_artifact(f"ssl_cert_{port}", out_file)
+            if cert.get("san") or cert.get("cn"):
+                names = ", ".join((cert.get("san") or []) + ([cert["cn"]] if cert.get("cn") else []))
+                console.print(f"      [magenta]cert hostnames: {names}[/magenta]")
+
+    # ── vHost discovery ─────────────────────────────────────
+    def run_vhost_fuzz(self, base_url: str):
+        """ffuf with a Host-header FUZZ to uncover name-based virtual hosts.
+        For domain targets: FUZZ.<domain>. For raw IPs (HTB machines): plain
+        FUZZ against a subdomain wordlist — a different response size than
+        the default-vhost baseline indicates a dedicated vhost."""
+        if not self.tool_exists(self.tool("ffuf")):
+            return
+        wordlist = self.config.wordlist("vhosts")
+        if not wordlist or not Path(wordlist).exists():
+            return
+
+        host_base = self.state.target
+        if self.state.target_type == "domain":
+            host_value = f"FUZZ.{host_base}"
+        else:
+            host_value = "FUZZ"
+
+        # Baseline: response size for the default host — everything that
+        # differs in size is a candidate vhost.
+        baseline_size = self._vhost_baseline(base_url)
+        if baseline_size is None:
+            return
+
+        safe = base_url.replace("://", "_").replace(":", "_")
+        out_file = self.web_dir / f"vhosts_{safe[:40]}.json"
+
+        cmd = [
+            self.tool("ffuf"), "-u", base_url,
+            "-w", wordlist,
+            "-H", f"Host: {host_value}",
+            "-o", str(out_file), "-of", "json",
+            "-rate", str(self.profile["ffuf_rate"]),
+            "-mc", "all", "-fc", "404",
+            "-fs", str(baseline_size),
+            "-t", "50", "-s",
+        ]
+        self.run_command(cmd, timeout=240, silent=True)
+
+        if out_file.exists():
+            findings = self._parse_ffuf_json(out_file)
+            for f in findings:
+                fuzz_word = f.get("input", {}).get("FUZZ", "?")
+                self.state.vhosts.append({
+                    "host": fuzz_word,
+                    "host_full": host_value.replace("FUZZ", fuzz_word),
+                    "status": f["status"],
+                    "size": f.get("size", 0),
+                })
+            if self.state.vhosts:
+                self.state.add_artifact(f"vhosts_{safe[:30]}", out_file)
+
+    def _vhost_baseline(self, base_url: str) -> Optional[int]:
+        """Response size when requesting with the default Host header —
+        the baseline that vHost candidates must differ from."""
+        try:
+            # verify=False is deliberate — recon targets routinely present
+            # self-signed certs (see run_ssl_cert).
+            resp = requests.get(base_url, timeout=10, verify=False, allow_redirects=False)
+            return len(resp.content)
+        except requests.RequestException:
+            return None
+
+    # ── API endpoint probing ─────────────────────────────────
+    def run_api_probe(self, base_url: str):
+        """Direct GET against common API/documentation endpoints. Hits like
+        swagger.json / openapi.json / graphql land in web_findings tagged
+        source='api-probe' so they surface in the report's web tables."""
+        for path in API_PATHS:
+            url = base_url.rstrip("/") + path
+            try:
+                # verify=False: see run_ssl_cert — probing self-signed recon targets
+                resp = requests.get(url, timeout=8, verify=False, allow_redirects=False)
+                if resp.status_code in [200, 201, 204, 401, 403] and resp.status_code != 404:
+                    if resp.status_code != 403 or "api" in path:  # 403 only counts for explicit API paths
+                        self.state.web_findings.append({
+                            "url": url,
+                            "status": resp.status_code,
+                            "size": len(resp.content),
+                            "words": 0,
+                            "source": "api-probe",
+                        })
+            except requests.RequestException:
+                continue
+
+    # ── Extension fuzzing pass ─────────────────────────────────
+    def run_extension_ffuf(self, base_url: str):
+        """Second ffuf pass appending common file extensions. Tuned per
+        profile via config.yaml's web_extensions (empty = disabled, which
+        is the stealth default)."""
+        if not self.tool_exists(self.tool("ffuf")):
+            return
+        extensions = (self.config.web_extensions or {}).get(self.state.profile, "")
+        if not extensions:
+            return
+        self.run_ffuf(url=f"{base_url}/FUZZ", extensions=extensions)
 
     def run_screenshot(self, url: Optional[str] = None):
         """Capture a screenshot of the target web port via gowitness (v3 CLI)."""

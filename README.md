@@ -1,117 +1,104 @@
 # RVR — Ryxvoid Recon Framework
 
-RVR is a Python CLI reconnaissance framework built around one idea: don't run every tool
-against every target. Most recon scripts fire off Nmap, ffuf, enum4linux, and a dozen
-other tools in parallel regardless of what's actually on the box. RVR runs an initial
-sweep, looks at what's actually open, and only launches the modules that make sense for
-that specific target — SMB tools only fire if 445 is open, web fuzzing only fires if
-there's a web server, and so on.
-
-It's built for authorized penetration testing, CTF environments (HackTheBox,
-TryHackMe), and personal lab infrastructure.
-
 ```
-$ rvr -t 10.10.11.1
-
-╭─────────────────────────────── Scan Plan ────────────────────────────────╮
-│      Target  10.10.11.1 (ip)                                             │
-│     Profile  normal                                                      │
-│              Balanced default — T3 timing, standard -sV -sC service      │
-│              detection, 100 req/s fuzzing.                               │
-│      Output  ~/rvr_loot/10.10.11.1                                       │
-│     Threads  4 concurrent module(s) in Phase 3                           │
-│ Attacker IP  10.10.14.5 (tun0)                                           │
-╰────────────────────────────────────────────────────────────────────────╯
-
-── Phase 2 — Network Sweep ──────────────────────────
-  ✓  Port discovery — 4 open ports (11s)
-  ✓  Service detection complete (9s)
-
-── Phase 3 — Conditional Enumeration ────────────────
-  Module     Triggered because
-  ─────────────────────────────────────────
-  web        Any common web port open
-  smb        SMB ports 139/445 open
-  ftp        FTP port 21 open
-
-  ⠋ Conditional enumeration ━━━━━━━━━━━━━━━━━━━━━━ 3/3  0:00:47
-
-── Phase 4 — AI Analysis ────────────────────────────
-  ✓  Risk level: High
-
-── Phase 5 — Report Generation ──────────────────────
-  ✓  Report saved: ~/rvr_loot/10.10.11.1/report.pdf
-
-╭──────────────────── Scan Complete — 1m 34s ─────────────────────╮
-│  Open ports               4                                     │
-│  Web findings              23                                   │
-│  Vulnerabilities (Nuclei)  2                                    │
-│  AI risk assessment        High                                 │
-│  Raw data                  ~/rvr_loot/10.10.11.1/raw_data.json  │
-│  Report                    ~/rvr_loot/10.10.11.1/report.pdf     │
-╰──────────────────────────────────────────────────────────────────╯
+  ██████╗ ██╗   ██╗██████╗
+  ██╔══██╗██║   ██║██╔══██╗
+  ██████╔╝██║   ██║██████╔╝
+  ██╔══██╗╚██╗ ██╔╝██╔══██╗
+  ██║  ██║ ╚████╔╝ ██║  ██║
+  ╚═╝  ╚═╝  ╚═══╝  ╚═╝  ╚═╝
+  RYXVOID RECON FRAMEWORK · v2.0.0 · CPTS / HTB edition
 ```
 
-## Why it exists
+RVR is a Python CLI reconnaissance framework built around one idea: **don't run every tool
+against every target.** Most recon scripts fire Nmap, ffuf, enum4linux, and a dozen other
+tools in parallel regardless of what's actually on the box. RVR runs an initial sweep,
+looks at what's actually open, and only launches the modules that make sense for that
+specific target — SMB tooling only fires if 445 is open, Kerberos attacks only fire if
+88 is open, web fuzzing only fires if there's a web server.
 
-Every recon framework I'd used before either ran a fixed pipeline regardless of the
-target, or required me to manually chain tools together myself, re-reading Nmap output
-to decide what to run next. RVR automates that decision-making: the network sweep
-populates a shared state object, and the orchestrator inspects that state to decide
-which modules actually apply. On a target with only SSH open, RVR runs the network
-sweep and stops there — no wasted ffuf runs against a port that was never open in the
-first place.
+v2 turns that engine into a **CPTS-grade attack-surface mapper**: Active Directory
+enumeration (Kerberos attacks, BloodHound collection, ADCS misconfiguration detection),
+Exploit-DB correlation, a HTB machine workflow, AI attack-path analysis, and
+commercial-grade PDF + Markdown reporting — the kind of deliverable the CPTS exam
+grades you on, not just a port list.
 
-## Architecture
-
-RVR is organized as a small orchestrator (`RVRCore`) driving independent modules that
-all share one piece of state (`RVRState`) for the duration of a scan. Which conditional
-modules exist, and what triggers each one, is declared once in a registry rather than
-hardcoded into the orchestrator's control flow.
+Built for authorized penetration testing, HackTheBox machines and CTFs, and personal
+lab infrastructure.
 
 ```
-rvr/
-├── core.py                    # Orchestrator — decides which phases run and in what order
-├── config/
-│   └── config.yaml            # Wordlists, tool binary names, per-profile scan flags
-├── modules/
-│   ├── base.py                 # Shared subprocess runner + config-driven tool() resolver
-│   ├── registry.py             # Declares each conditional module's trigger condition
-│   ├── network.py              # Nmap sweep (TCP + optional UDP)
-│   ├── web.py                   # WhatWeb, ffuf, Gobuster, Nuclei, gowitness screenshots
-│   ├── smb.py                   # enum4linux-ng, NetExec
-│   ├── nfs.py                   # showmount / RPC enumeration
-│   ├── snmp.py                  # snmpwalk enumeration
-│   ├── ftp.py                   # Anonymous login check, banner grab, directory listing
-│   ├── databases.py             # MySQL/MSSQL/PostgreSQL/Redis/MongoDB misconfig checks
-│   ├── ldap_enum.py             # Anonymous LDAP bind + Active Directory enumeration
-│   ├── rdp.py                   # Unauth NTLM info leak, NLA/encryption check
-│   ├── osint.py                 # subfinder / theHarvester for domain targets
-│   ├── ai_analysis.py           # Sends findings to an AI provider for CVE correlation
-│   └── ai_providers.py          # Gemini / Groq / Claude / OpenAI provider abstraction
-├── output/
-│   ├── pdf_report.py            # Builds the final PDF engagement report (reportlab)
-│   └── discord_notify.py        # Posts a scan-complete summary to a Discord webhook
-└── utils/
-    ├── state.py                  # RVRState dataclass — the single source of truth for a scan
-    ├── config.py                  # Loads config.yaml, merges over built-in defaults
-    ├── console.py                  # rich-based logging, panels, and progress display
-    ├── validator.py                # Target validation (IP / subnet / domain)
-    └── network_info.py             # Detects the attacker's VPN (tun0) or LAN interface
+$ rvr -t 10.10.11.23 --htb
+
+╭────────────────────────── Scan Plan ──────────────────────────╮
+│      Mode  FULL PIPELINE — phases 1 → 6                        │
+│    Target  10.10.11.23 (ip)                                    │
+│   Profile  aggressive                                          │
+│  HTB mode  ENABLED — hostname → /etc/hosts → notes.md          │
+│ Attacker IP  10.10.14.7 (tun0)                                 │
+╰────────────────────────────────────────────────────────────────╯
+
+── Phase 2 — Network Sweep ──────────────────────────────
+  ✓  Port discovery — 10 open ports (24s)
+  ✓  Service detection complete (31s)
+
+── Phase 3 — Conditional Enumeration ────────────────────
+  ✓ Module            Triggered because
+  ○ web               Any common web port open
+  ○ smb               SMB ports 139/445 open
+  ○ ldap              LDAP/AD ports 389/636/3268/3269 open
+  ○ kerberos          Kerberos port 88 open — Kerbrute / AS-REP roast
+  ○ bloodhound        Kerberos + LDAP open — likely a Domain Controller
+  ○ adcs              Web ports + AD services open
+  ○ exploits          Services with versions detected — Exploit-DB correlation
+  ⠋ Conditional enumeration ━━━━━━━━━━━━━━━━━━━━━ 7/7  0:03:12
+
+── Phase 3.5 — HTB Workflow ─────────────────────────────
+  ✓  Machine hostname: dc01.support.htb (ssl-cert-san, rdp-ntlm, smb)
+  ✓  /etc/hosts: 10.10.11.23  dc01.support.htb
+  ✓  Notes template: ~/rvr_loot/10.10.11.23/notes.md
+
+╭─────────────── Scan Complete — 5m 48s ────────────────────────╮
+│        Risk  ■ CRITICAL                                        │
+│    Findings  🔴 4  🟠 6  🟡 5  🟢 2  (17 total)                 │
+│                                                                │
+│  Services   PORT   SERVICE         VERSION                     │
+│             88/tcp  kerberos-sec   Microsoft Windows Kerberos  │
+│             445/tcp microsoft-ds   Windows Server 2019         │
+│             ...                                                │
+│  Top findings                                                  │
+│    🔴 Nuclei: MySQL Root Empty Password · 10.10.11.23:3306     │
+│    🔴 AS-REP Roastable Accounts (2) · 10.10.11.23:88           │
+│  Attack intel                                                  │
+│    domain support.htb · 2 AS-REP roastable · 1 kerberoastable  │
+│    · 2 hash(es) captured · 2 public exploit(s)                 │
+│  Deliverables   report.pdf  report.md  notes.md                │
+╰────────────────────────────────────────────────────────────────╯
 ```
 
-### The scan pipeline (`run_full`)
+## What's new in v2.0.0
 
-`RVRCore.run_full()` walks through six phases, each gated by what's already been
-discovered:
+| Area | Change |
+|---|---|
+| **AD attacks** | New modules: `kerberos` (Kerbrute, AS-REP roasting, opt-in Kerberoasting with hashcat command generation), `bloodhound` (anonymous/credentialed collection + manual fallback), `adcs` (web enrollment detection, certipy vulnerable-template enumeration) |
+| **Exploit correlation** | `exploits` module runs searchsploit against every identified service+version and feeds matches into reports, AI prompts and notes |
+| **Web depth** | SSL certificate mining (SAN/CN → hostnames), virtual host fuzzing, API endpoint discovery, extension fuzzing |
+| **HTB workflow** | `--htb` — machine hostname aggregation from every collected source, `/etc/hosts` entry, pre-filled `notes.md` engagement scratchpad; `--tool pivot` generates Ligolo-ng / Chisel / SSH tunnel command sheets |
+| **Reports** | Complete rewrite: severity-ranked findings with evidence/impact/remediation, attack paths, remediation roadmap, appendices — rendered to **PDF and Markdown** from the same findings builder, complete with or without AI |
+| **Discord** | Multi-embed notification mirroring the report: engagement overview, findings, attack surface, AD intel, AI next steps |
+| **AI analysis v2** | Structured findings, MITRE-mapped attack paths, prioritized next-step commands — merged into (not required by) the reports |
+| **CLI / install** | `pyproject.toml` with an `rvr` entry point, `rvr/cli.py`, `--htb`, `--creds`, 17 micro-tools, self-healing launcher, resume support for every new module |
+| **UI** | New gradient banner, phase-tracked headers, end-of-scan dashboard with services table, severity distribution and attack intel |
+
+## The scan pipeline
+
+`RVRCore.run_full()` walks six phases, each gated by what's already been discovered:
 
 1. **OSINT** — only runs if the target is a domain (subfinder / theHarvester).
-2. **Network Sweep** — always runs. Nmap TCP scan (optionally UDP with `--udp`), scaled
-   by the selected profile (`stealth` / `normal` / `aggressive`). This phase populates
-   `RVRState.open_ports`, which drives everything downstream.
+2. **Network Sweep** — always runs. Nmap TCP scan (optionally UDP with `--udp`), scaled by
+   the selected profile (`stealth` / `normal` / `aggressive`). Populates `RVRState.open_ports`,
+   which drives everything downstream.
 3. **Conditional Enumeration** — inspects `open_ports` against the module registry and
-   launches only what applies, in parallel via a `ThreadPoolExecutor`, with a live
-   progress bar tracking overall completion:
+   launches only what applies, in parallel via a `ThreadPoolExecutor` with a live progress bar:
 
    | Module | Triggered by |
    |---|---|
@@ -123,38 +110,95 @@ discovered:
    | `databases` | Port 3306 (MySQL), 1433 (MSSQL), 5432 (PostgreSQL), 6379 (Redis), or 27017 (MongoDB) open |
    | `ldap` | Port 389, 636, 3268, or 3269 open |
    | `rdp` | Port 3389 open |
+   | `kerberos` | Port 88 open — Kerbrute + AS-REP roasting (Kerberoast is opt-in via `--creds`) |
+   | `bloodhound` | Kerberos **and** LDAP open — likely a Domain Controller |
+   | `adcs` | Web ports + AD services open — AD CS web enrollment / certipy checks |
+   | `exploits` | Any service with a version banner — Exploit-DB correlation |
 
-   Adding a new conditional module means adding one entry to `rvr/modules/registry.py`
-   — the orchestrator doesn't need to change.
-4. **AI Analysis** — sends the structured findings (open ports, web tech stack, Nuclei
-   hits, and now FTP/database/LDAP/RDP findings too) to an AI provider, which correlates
-   them against known CVE patterns and suggests likely attack paths. Supports Gemini,
-   Groq, Claude, and OpenAI — see [AI providers](#ai-providers) below. Skipped
-   automatically if no provider API key is set.
-5. **Report Generation** — renders everything collected into a PDF engagement report.
-   Always regenerates even when resuming a scan, so it reflects whatever's actually in
-   state.
-6. **Discord Notification** — optional webhook ping when the scan finishes, so a scan
-   left running against a bigger subnet doesn't need to be babysat.
+   Adding a new conditional module means adding one entry to `rvr/modules/registry.py` —
+   the orchestrator doesn't need to change.
 
-Every phase writes into the same `RVRState` object and is wrapped in its own
-try/except, so one module failing (a tool timing out, a binary not being installed)
-doesn't take down the rest of the scan — it's logged and marked failed in the final
-state file instead.
+3.5. **HTB workflow** (`--htb`, IP targets) — aggregates the machine hostname from every
+   collected source (SSL SAN/CN, RDP NTLM info, SMB, LDAP, NSE scripts), optionally adds
+   it to `/etc/hosts`, and writes a `notes.md` engagement scratchpad.
 
-### Scan profiles
+4. **AI Analysis** — sends the structured findings to an AI provider, which returns
+   severity-ranked findings, MITRE-mapped attack paths, and prioritized next-step commands.
+   Skipped automatically if no provider API key is set.
+5. **Report Generation** — PDF + Markdown engagement reports (details below). Always
+   regenerates even when resuming, so it reflects whatever's actually in state.
+6. **Discord Notification** — optional rich multi-embed webhook ping when the scan finishes.
 
-Profiles are defined in `config.yaml` (falling back to built-in defaults if the file is
-missing or a profile isn't defined there) and control both Nmap timing and ffuf request
-rate:
+Every phase writes into the same `RVRState` object and is wrapped in its own try/except —
+one module failing (a tool timing out, a binary not installed) never takes down the scan;
+it's logged and marked failed in the final state file instead.
 
-| Profile | Nmap | ffuf rate |
-|---|---|---|
-| `stealth` | `-sS --scan-delay 2s`, timing `T1` | 10 req/s |
-| `normal` (default) | `-sS -sV -sC`, timing `T3` | 100 req/s |
-| `aggressive` | `-sS -sV -sC -A`, timing `T4` | 500 req/s |
+### Credential attacks are opt-in
 
-### AI providers
+No credential-style attack ever runs automatically. Unauthenticated checks (anonymous
+enumeration, AS-REP roasting) run on their own because they require no credentials.
+Everything that *uses* credentials is gated:
+
+- `--creds user:pass` — unlocks Kerberoasting, credentialed BloodHound collection and
+  certipy enumeration
+- `--tool spray` — interactive password spray with explicit lockout warnings
+
+## Reports
+
+Both report formats are generated from the same **findings builder** — deterministic
+heuristics turn every well-known recon signal (anonymous FTP, SMB signing disabled,
+AS-REP roastable accounts, unauthenticated databases, exposed NFS, Nuclei hits, matched
+public exploits, ...) into a structured finding with curated description, evidence,
+impact and remediation text. AI findings are merged in on top. The reports are complete
+with or without an AI provider configured — AI enriches, it doesn't gate.
+
+**`report.pdf`** — the client-facing deliverable: cover page, table of contents,
+engagement overview with methodology, executive summary, risk summary matrix, detailed
+findings (description / evidence / reproduction / impact / remediation / references per
+finding), attack-path analysis with MITRE mapping, a prioritized remediation roadmap,
+and technical appendices A–H (network, web, directory services, captured hashes,
+Exploit-DB correlation, OSINT, screenshots, artifacts).
+
+**`report.md`** — the same structure as portable Markdown: diffs cleanly, lives in git,
+pastes into note apps. Adds a *Recommended Next Steps* section with ready-to-run
+commands — the document you keep open during the engagement while the PDF is the one
+you hand over.
+
+Both carry an overall risk rating, severity distribution (Critical / High / Medium /
+Low / Informational), and honour the CPTS rule that the report is the deliverable, not
+the flags.
+
+## Discord notifications
+
+With `DISCORD_WEBHOOK_URL` set, scan completion posts a multi-embed summary that mirrors
+the report: engagement overview (target, profile, duration, risk), findings with severity
+distribution and critical/high detail, attack surface (ports, web stack, vHosts, TLS
+certificates), AD / attack intel (domain, roastable accounts, captured hashes, public
+exploits), and AI next steps. Disable with `--no-discord`.
+
+## HTB / CPTS workflow
+
+Built around how CPTS-style engagements actually go:
+
+```bash
+# Machine workflow: hostname discovery → /etc/hosts → notes.md → full pipeline
+rvr -t 10.10.11.23 --htb --profile aggressive
+
+# Found credentials mid-engagement? Re-run with them to unlock Kerberoast,
+# credentialed BloodHound and certipy (resume skips what's already done)
+rvr -t 10.10.11.23 --creds svc-web:'Summer2024!' --resume
+
+# Multi-hop pivoting (CPTS is built on it) — generates a command sheet for
+# Ligolo-ng, Chisel and SSH tunnels; nothing executes automatically
+rvr --tool pivot -t 10.10.11.23
+```
+
+`notes.md` is pre-filled with the attack surface table, enumerated accounts, captured
+hashes with their cracking commands, exploit matches, and foothold / privilege-escalation
+checkboxes — because documenting in real time is the difference between passing and
+failing the CPTS report even when you have all the flags.
+
+## AI providers
 
 `rvr/modules/ai_providers.py` abstracts over four providers so AI analysis isn't tied to
 a single vendor's quota. Set whichever API key(s) you have in `.env`:
@@ -168,16 +212,62 @@ a single vendor's quota. Set whichever API key(s) you have in `.env`:
 
 With `AI_PROVIDER` unset or `auto`, RVR picks the first available key in the order
 above. Set `AI_PROVIDER` explicitly (`gemini` / `groq` / `claude` / `openai`) to force a
-choice, and `AI_MODEL` to override the default model for whichever provider is
-selected.
+choice, and `AI_MODEL` to override the default model.
+
+## Architecture
+
+```
+rvr/
+├── cli.py                     # CLI entry point (argparse, env validation, sudo pre-auth)
+├── core.py                    # Orchestrator — phases, registry-driven dispatch, micro mode
+├── config/
+│   └── config.yaml            # Wordlists, tool binary names, per-profile scan flags
+├── modules/
+│   ├── base.py                # Shared subprocess runner + config-driven tool() resolver
+│   ├── registry.py            # Declares each conditional module's trigger condition
+│   ├── network.py             # Nmap sweep (TCP + optional UDP)
+│   ├── web.py                 # WhatWeb, ffuf, Nuclei, gowitness, vHost/API/SSL discovery
+│   ├── smb.py                 # enum4linux-ng, NetExec, opt-in password spray
+│   ├── kerberos.py            # Kerbrute, AS-REP roast, Kerberoast, hashcat command gen
+│   ├── bloodhound.py          # bloodhound-python collection + manual fallback
+│   ├── adcs.py                # AD CS web enrollment detection, certipy templates
+│   ├── exploits.py            # searchsploit Exploit-DB correlation
+│   ├── htb.py                 # Hostname aggregation, /etc/hosts, notes.md, pivot generator
+│   ├── ldap_enum.py           # Anonymous LDAP bind + Active Directory enumeration
+│   ├── rdp.py                 # Unauth NTLM info leak, NLA/encryption check
+│   ├── nfs.py / snmp.py / ftp.py / databases.py / osint.py
+│   ├── ai_analysis.py         # Structured AI analysis (findings, attack paths, next steps)
+│   └── ai_providers.py        # Gemini / Groq / Claude / OpenAI provider abstraction
+├── output/
+│   ├── findings.py            # RVRState → severity-ranked report findings
+│   ├── pdf_report.py          # Commercial-grade PDF engagement report (reportlab)
+│   ├── markdown_report.py     # Markdown twin of the PDF + next-step commands
+│   └── discord_notify.py      # Rich multi-embed Discord notification
+└── utils/
+    ├── state.py               # RVRState dataclass — single source of truth for a scan
+    ├── config.py              # Loads config.yaml, merges over built-in defaults
+    ├── console.py             # Rich banner, thread-safe logging, end-of-scan dashboard
+    ├── validator.py           # Target validation (IP / subnet / domain)
+    └── network_info.py        # Detects the attacker's VPN (tun0) or LAN interface
+```
+
+`main.py` remains as a thin shim for direct invocation; the packaged `rvr` command
+(pyproject.toml) and the global launcher both route through `rvr/cli.py`.
+
+### Scan profiles
+
+| Profile | Nmap | ffuf rate |
+|---|---|---|
+| `stealth` | `-sS --scan-delay 2s`, timing `T1` | 10 req/s |
+| `normal` (default) | `-sS -sV -sC`, timing `T3` | 100 req/s |
+| `aggressive` | `-sS -sV -sC -A`, timing `T4` | 500 req/s |
 
 ### Configuration (`config.yaml`)
 
-`rvr/config/config.yaml` controls wordlist paths, tool binary names, per-profile scan
-flags, concurrency, and the default output directory. Every module resolves its tool
-binary through `self.tool("key")` rather than hardcoding it, so renaming or relocating a
-binary (e.g. if `enum4linux-ng` is installed under a different name) is a one-line config
-change, not a code change.
+`rvr/config/config.yaml` controls wordlists (including vHost and username lists), tool
+binary names, per-profile scan flags, concurrency, and the default output directory.
+Every module resolves its tool binary through `self.tool("key")` rather than hardcoding
+it, so renaming or relocating a binary is a one-line config change, not a code change.
 
 A missing, partial, or malformed `config.yaml` never breaks a scan — RVR merges whatever
 the file provides over built-in defaults and logs a warning for anything it had to fall
@@ -188,124 +278,117 @@ environment variable.
 
 `--resume` re-reads a previous scan's `raw_data.json` from the output directory and
 skips any module that already completed successfully, instead of re-running the whole
-pipeline from scratch. Useful if a scan died partway through (tool crash, target went
-offline, you Ctrl+C'd it) — rerun the same command with `--resume` added and only what's
-missing or previously failed actually runs. A module that failed last time and succeeds
-on retry moves cleanly out of the failed list. Report generation always re-runs on
-resume so the PDF reflects whatever's actually in state, even if new modules completed
-this time; AI analysis stays skippable so you're not burning API quota re-analyzing data
-you already have.
+pipeline. Useful if a scan died partway through (tool crash, target went offline, you
+Ctrl+C'd it) — rerun the same command with `--resume` added and only what's missing or
+previously failed actually runs. Works across the new AD modules too: scan anonymous,
+find credentials, re-run with `--creds ... --resume` and only the credentialed
+collection runs.
 
 ### Micro-variant mode
 
 Sometimes you don't want the full pipeline — you want to re-run one tool interactively
 against a target you've already scanned. `--tool` bypasses `run_full()` entirely and
-drops into a single-tool interactive prompt (`run_micro()`) with validated menu choices,
-without re-triggering the rest of the pipeline. Covers `nmap`, `ffuf`, `subfinder`,
-`nuclei`, `whatweb`, `enum4linux`, `netexec`, `snmpwalk`, `ftp`, `ldapsearch`, and `rdp`
-— run `rvr --tool <name> -t <target>` or see `rvr -h` for what each one does.
+drops into a single-tool interactive prompt with validated menu choices:
+
+`nmap` · `ffuf` · `subfinder` · `nuclei` · `whatweb` · `enum4linux` · `netexec` ·
+`snmpwalk` · `ftp` · `ldapsearch` · `rdp` · `kerberos` · `bloodhound` ·
+`searchsploit` · `vhosts` · `pivot` · `spray`
+
+```bash
+rvr --tool kerberos -t 10.10.11.23    # Kerbrute + AS-REP roast, or Kerberoast
+rvr --tool searchsploit -t 10.10.11.23  # correlate state's services against Exploit-DB
+rvr --tool vhosts -t 10.10.11.23      # vHost fuzzing on the first web port
+```
 
 ## Requirements
 
-RVR orchestrates external tools rather than reimplementing them — it needs these
-installed and on `PATH` (all present by default on Kali, or installable individually):
+RVR orchestrates external tools rather than reimplementing them. It needs these
+installed and on `PATH` (all present by default on Kali):
 
-- `nmap`
-- `ffuf`, `gobuster`
-- `nuclei`, `subfinder` ([ProjectDiscovery](https://github.com/projectdiscovery) toolkit)
+- `nmap`, `ffuf`, `gobuster`, `whatweb`, `nuclei`, `subfinder`, `gowitness`
 - `enum4linux-ng`, `netexec`
-- `whatweb`
-- `snmpwalk` (net-snmp)
-- `showmount`, `rpcinfo` (nfs-common / rpcbind)
+- `snmpwalk` (net-snmp), `showmount` / `rpcinfo` (nfs-common), `ldapsearch` (ldap-utils)
 - `theHarvester`
-- `gowitness` (web screenshots)
-- `ldapsearch` (ldap-utils / openldap-clients)
+- `searchsploit` (exploitdb)
+- `impacket` (`impacket-GetNPUsers`, `impacket-GetUserSPNs` — on Kali these install as
+  `/usr/bin/impacket-*`)
+- `bloodhound-python` (`pipx install bloodhound-ce` or your package manager)
+- `hashcat` / `john` — for the generated cracking commands (optional; commands are
+  written either way)
+- `kerbrute`, `certipy`, `ligolo-ng` — optional; modules detect their absence, skip, and
+  write `MANUAL_COMMANDS.md` files with the exact commands to run instead
 
-FTP enumeration uses Python's stdlib `ftplib` — no extra binary needed. Database and RDP
-checks reuse `nmap` (targeted NSE scripts) and `netexec` — nothing new to install there
-either.
+Missing tools are warnings, not failures — every module degrades to guidance.
 
-Python dependencies (see `requirements.txt`):
-
-```
-rich>=13.0.0
-python-dotenv>=1.0.0
-requests>=2.31.0
-reportlab>=4.0.0
-PyYAML>=6.0
-
-# AI providers — install whichever you plan to use
-google-genai>=0.3.0
-openai>=1.50.0        # also covers Groq — same client, different base_url
-# anthropic>=0.40.0
-```
+Python dependencies (see `requirements.txt`): `rich`, `python-dotenv`, `requests`,
+`reportlab`, `PyYAML`, plus `google-genai` / `openai` (and optionally `anthropic`) for
+the AI phase.
 
 ## Setup
 
 ```bash
 git clone https://github.com/Ryx13/rvr.git
 cd rvr
-pip install -r requirements.txt
-cp .env.example .env
+
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+cp .env.example .env     # fill in your AI keys / Discord webhook (all optional)
 ```
 
-Fill in `.env` with whichever AI provider key(s) you have — see
-[AI providers](#ai-providers) above — plus, optionally:
+Install as a proper command (recommended):
 
 ```bash
-# Server Settings → Integrations → Webhooks in Discord
-DISCORD_WEBHOOK_URL=your_discord_webhook_url_here
+.venv/bin/pip install -e .     # puts `rvr` on PATH via the package entry point
+rvr --version                  # RVR v2.0.0
 ```
 
-Both are optional — omit every AI provider key and the AI analysis phase is skipped
-automatically; omit `DISCORD_WEBHOOK_URL` or pass `--no-discord` and the notification
-step is skipped.
+Or run it without installing:
 
-If you're targeting a HackTheBox/TryHackMe box, connect your OpenVPN first — RVR
-auto-detects your `tun0` (falling back to your primary LAN interface) and shows the
-attacker IP it found in the startup panel, so you know immediately if the VPN isn't up.
+```bash
+.venv/bin/python main.py -t 10.10.11.23
+.venv/bin/python -m rvr.cli -t 10.10.11.23
+```
+
+The dev checkout can also carry a self-healing global launcher at `/usr/local/bin/rvr`
+that verifies the venv before every run and rebuilds it if a system Python upgrade
+broke it — see the launcher block in this repo's docs or write your own pointing at
+`<checkout>/main.py`.
+
+If you're targeting a HackTheBox box, connect your OpenVPN first — RVR auto-detects
+your `tun0` (falling back to your primary LAN interface) and shows the attacker IP it
+found in the startup panel, so you know immediately if the VPN isn't up.
 
 ## Usage
 
 ```bash
 # Full suite, default (normal) profile
-python3 main.py -t 10.10.11.1
+rvr -t 10.10.11.23
 
-# Stealthier timing for environments where noise matters
-python3 main.py -t 10.10.11.1 --profile stealth
+# HTB machine: hostname → /etc/hosts → notes.md, loud profile
+rvr -t 10.10.11.23 --htb --profile aggressive
 
-# Everything, harder — aggressive Nmap flags + high ffuf rate
-python3 main.py -t 10.10.11.1 --profile aggressive
+# Stealthier timing where noise matters
+rvr -t 10.10.11.23 --profile stealth
 
-# Domain target — runs the OSINT phase (subfinder/theHarvester) first
-python3 main.py -t example.com --profile normal
+# Domain target — runs the OSINT phase first
+rvr -t example.com
+
+# Credentialed AD collection (also re-runnable with --resume)
+rvr -t 10.10.11.23 --creds svc-web:'Summer2024!'
 
 # Just one tool, interactively
-python3 main.py --tool nmap -t 10.10.11.1
-python3 main.py --tool ffuf -t 10.10.11.1
-python3 main.py --tool enum4linux -t 10.10.11.1
-python3 main.py --tool ftp -t 10.10.11.1
-python3 main.py --tool ldapsearch -t 10.10.11.1
-python3 main.py --tool rdp -t 10.10.11.1
+rvr --tool nmap -t 10.10.11.23
+rvr --tool kerberos -t 10.10.11.23
 
-# Skip specific phases
-python3 main.py -t 10.10.11.1 --skip osint ai
-
-# Resume a scan that died partway through
-python3 main.py -t 10.10.11.1 --resume
-
-# Custom config, output directory, thread count, and UDP top-200 scan
-python3 main.py -t 10.10.11.1 --config ./my.yaml -o ./loot --threads 8 --udp
+# Skip phases, resume, custom everything
+rvr -t 10.10.11.23 --skip ai exploits
+rvr -t 10.10.11.23 --resume
+rvr -t 10.10.11.23 --config ./my.yaml -o ./loot --threads 8 --udp
 ```
 
-Optionally symlink it onto your `PATH` for the `rvr` shorthand used above:
-
-```bash
-sudo ln -s "$(pwd)/main.py" /usr/local/bin/rvr
-```
-
-Run `rvr -h` for the full flag reference, including a breakdown of what every
-`--tool` and `--skip` value does.
+Run `rvr -h` for the full flag reference, including a breakdown of what every `--tool`
+and `--skip` value does.
 
 ### All flags
 
@@ -313,43 +396,57 @@ Run `rvr -h` for the full flag reference, including a breakdown of what every
 |---|---|
 | `-t, --target` | Target IP, subnet, or domain (required) |
 | `--profile` | `stealth` \| `normal` \| `aggressive` (default: `normal`) |
-| `--tool` | Run a single tool interactively — `nmap`, `ffuf`, `subfinder`, `nuclei`, `whatweb`, `enum4linux`, `netexec`, `snmpwalk`, `ftp`, `ldapsearch`, `rdp` |
+| `--tool` | Run a single tool interactively — 17 tools, see `rvr -h` |
+| `--htb` | HTB / CPTS workflow: hostname discovery, `/etc/hosts` entry (asks first), `notes.md` scratchpad |
+| `--creds` | AD credentials `USER:PASS` — unlocks Kerberoast, credentialed BloodHound, certipy. Opt-in only |
 | `-o, --output` | Override output directory (default: `<config output.base_dir>/<target>`, normally `~/rvr_loot/<target>`) |
 | `--config` | Path to a `config.yaml` to use instead of the bundled default (`RVR_CONFIG` env var also works) |
-| `--skip` | Skip specific modules: `osint network web smb nfs snmp ftp databases ldap rdp ai report` |
+| `--skip` | Skip specific modules: `osint network web smb nfs snmp ftp databases ldap rdp kerberos bloodhound adcs exploits ai report` |
 | `--no-ai` | Disable AI analysis (all providers) |
 | `--no-discord` | Disable the Discord webhook notification |
-| `--no-report` | Skip PDF report generation |
+| `--no-report` | Skip PDF/Markdown report generation |
 | `--resume` | Resume a previous scan in the output directory, skipping modules that already completed |
 | `--ports` | Override the Nmap port range, e.g. `--ports 1-65535` |
 | `--udp` | Include a UDP scan (top 200 ports) |
 | `--threads` | Max concurrent threads for Phase 3 (default: `config.yaml`'s `concurrency.max_workers`, normally 4) |
 | `-v, --verbose` | Print every underlying command as it runs |
+| `--version` | Print the version |
 
 ## Output
 
 Everything from a scan lands under `~/rvr_loot/<target>/` (or `-o <dir>`):
 
 ```
-~/rvr_loot/10.10.11.1/
+~/rvr_loot/10.10.11.23/
 ├── raw_data.json        # Full structured scan state — every finding, machine-readable
-├── ai_analysis.json      # Raw AI provider response, if the AI phase ran
-├── report.pdf             # Human-readable PDF engagement report
-├── network/                 # Raw Nmap output
-├── web/                       # WhatWeb / ffuf / Gobuster / Nuclei output
-│   └── screenshots/             # gowitness screenshots of discovered web ports
-├── smb/                       # enum4linux-ng / NetExec output
-├── nfs/
-├── snmp/
-├── ftp/                        # Banner + anonymous-login enumeration output
-├── databases/                  # Per-service nmap NSE output (MySQL/MSSQL/Redis/MongoDB)
-├── ldap/                       # RootDSE + anonymous-bind enumeration output
-└── rdp/                        # NTLM info + NLA/encryption check output
+├── ai_analysis.json     # Raw AI provider response, if the AI phase ran
+├── report.pdf           # Commercial-grade PDF engagement report
+├── report.md            # Markdown twin + recommended next-step commands
+├── notes.md             # HTB engagement scratchpad (--htb)
+├── network/             # Raw Nmap output
+├── web/                 # WhatWeb / ffuf / Nuclei output + screenshots/
+├── smb/                 # enum4linux-ng / NetExec output
+├── kerberos/            # Kerbrute / AS-REP / Kerberoast hashes + crack_commands.sh
+├── bloodhound/          # Collection .zip + MANUAL_COMMANDS.md fallback
+├── adcs/                # certipy output / manual commands
+├── exploits/            # searchsploit JSON per port
+├── nfs/  snmp/  ftp/  databases/  ldap/  rdp/
+└── pivoting.md          # Generated tunnel command sheet (--tool pivot)
 ```
 
-`raw_data.json` is the same object every module reads and writes to during the scan —
-useful if you want to script something against the raw findings rather than parse the
-PDF, and it's what `--resume` reads back in to figure out what's already done.
+`raw_data.json` is the same object every module reads and writes during the scan —
+useful for scripting against the raw findings rather than parsing the PDF, and it's
+what `--resume` reads back in to figure out what's already done.
+
+## Testing
+
+A synthetic-state smoke test exercises the findings builder, both report formats, the
+Discord payload, HTB notes generation and the end-of-scan dashboard against a rich,
+realistic state — without touching any target:
+
+```bash
+.venv/bin/python tests/test_synthetic_report.py
+```
 
 ## Design notes
 
@@ -357,8 +454,8 @@ A few decisions worth flagging if you're reading the source:
 
 - **Everything shares one dataclass.** `RVRState` is the single source of truth for a
   scan — every module reads what it needs from it and appends its findings back onto
-  it. This is what makes the conditional triggering possible: the web module doesn't
-  need to know how ports were discovered; it just checks `state.get_web_ports()`.
+  it. This is what makes conditional triggering possible: the web module doesn't need
+  to know how ports were discovered; it just checks `state.get_web_ports()`.
 - **Conditional modules are declared, not hardcoded.** `rvr/modules/registry.py` holds a
   list of `ModuleSpec`s (name, import path, trigger condition, human-readable reason).
   The orchestrator iterates the registry instead of an `if/elif` chain — adding a module
@@ -366,11 +463,11 @@ A few decisions worth flagging if you're reading the source:
 - **Modules fail independently.** Each phase is wrapped individually in `RVRCore`, so a
   single tool timing out or not being installed doesn't abort the whole scan — it's
   logged, marked failed in `raw_data.json`, and the rest of the pipeline continues.
-- **The AI phase is additive, not load-bearing.** RVR produces a complete, useful PDF
-  report from tool output alone; AI correlation is an extra layer on top for suggested
-  CVEs and attack paths, not a dependency the rest of the tool needs to function — and
-  it isn't tied to one vendor, so a quota limit on one provider doesn't stop the phase
-  from working if you've configured another.
+- **The AI phase is additive, not load-bearing.** Reports are built from deterministic
+  findings first; AI findings, attack paths and next steps merge in on top. No provider
+  configured → still a complete deliverable.
+- **Credential attacks never run automatically.** Unauthenticated checks only, unless
+  the operator passes `--creds` or explicitly invokes `--tool spray` past its warnings.
 - **Console output is thread-safe.** Phase 3 runs several modules concurrently; the
   shared logging helpers are guarded by a lock so concurrent output can't interleave
   mid-line and corrupt the terminal.

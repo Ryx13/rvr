@@ -85,6 +85,34 @@ CONDITIONAL_MODULES = [
         trigger=lambda s: s.has_port(3389),
         description="RDP port 3389 open",
     ),
+    ModuleSpec(
+        name="kerberos",
+        module_path="rvr.modules.kerberos",
+        class_name="KerberosModule",
+        trigger=lambda s: s.has_port(88),
+        description="Kerberos port 88 open — Kerbrute / AS-REP roast (Kerberoast is opt-in via --creds)",
+    ),
+    ModuleSpec(
+        name="bloodhound",
+        module_path="rvr.modules.bloodhound",
+        class_name="BloodHoundModule",
+        trigger=lambda s: s.has_port(88) and s.has_any_port(389, 636, 3268, 3269),
+        description="Kerberos + LDAP open — likely a Domain Controller; collects BloodHound data",
+    ),
+    ModuleSpec(
+        name="adcs",
+        module_path="rvr.modules.adcs",
+        class_name="ADCSModule",
+        trigger=lambda s: bool(s.get_web_ports()) and s.looks_like_ad(),
+        description="Web ports + AD services open — checks for exposed AD CS web enrollment / certipy",
+    ),
+    ModuleSpec(
+        name="exploits",
+        module_path="rvr.modules.exploits",
+        class_name="ExploitModule",
+        trigger=lambda s: bool(s.open_ports),
+        description="Services with versions detected — correlates them against Exploit-DB",
+    ),
 ]
 
 

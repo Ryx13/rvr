@@ -5,6 +5,17 @@ wordlists:
   web_common: /usr/share/seclists/Discovery/Web-Content/common.txt
   web_medium: /usr/share/seclists/Discovery/Web-Content/big.txt
   dns_common: /usr/share/seclists/Discovery/DNS/combined_subdomains.txt
+  # vHost / subdomain brute for the web module's FUZZ-based vhost discovery
+  vhosts: /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+  # Username candidates for Kerbrute / AS-REP roasting (AD)
+  usernames: /usr/share/seclists/Usernames/Names/names.txt
+
+# Default file extensions probed in the second ffuf pass (comma-separated).
+# Empty = disabled. Use more extensions on the aggressive profile.
+web_extensions:
+  stealth: ""
+  normal: "php,html,txt"
+  aggressive: "php,html,txt,bak,old,zip,tar,gz,sql,ini,log,yml,json"
 
 tools:
   nmap: nmap
@@ -22,10 +33,33 @@ tools:
   theharvester: theHarvester
   gowitness: gowitness
   ldapsearch: ldapsearch
+  # AD attack toolkit — Kali ships impacket binaries with the impacket- prefix
+  kerbrute: kerbrute
+  getnpusers: impacket-GetNPUsers
+  getuserspns: impacket-GetUserSPNs
+  bloodhound: bloodhound-python
+  certipy: certipy
+  searchsploit: searchsploit
+  openssl: openssl
 
 concurrency:
   max_workers: 4
   heavy_tools: 2
+
+# AD / CPTS module tuning. Password-style attack steps that could lock
+# accounts or require credentials always stay opt-in (CLI flags), never
+# automatic.
+active_directory:
+  # Maximum usernames handed to AS-REP roasting in one pass
+  max_asrep_users: 200
+  # BloodHound collectors to run when collection triggers
+  bloodhound_collectors: "All"
+
+htb:
+  # --htb: also add discovered hostname to /etc/hosts (needs sudo)
+  add_hosts_entry: true
+  # --htb: generate a pre-filled notes.md scratchpad for the machine
+  generate_notes: true
 
 profiles:
   stealth:

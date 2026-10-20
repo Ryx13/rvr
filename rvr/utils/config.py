@@ -32,6 +32,13 @@ DEFAULTS: Dict[str, Any] = {
         "web_common": "/usr/share/seclists/Discovery/Web-Content/common.txt",
         "web_medium": "/usr/share/seclists/Discovery/Web-Content/big.txt",
         "dns_common": "/usr/share/seclists/Discovery/DNS/combined_subdomains.txt",
+        "vhosts": "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
+        "usernames": "/usr/share/seclists/Usernames/Names/names.txt",
+    },
+    "web_extensions": {
+        "stealth": "",
+        "normal": "php,html,txt",
+        "aggressive": "php,html,txt,bak,old,zip,tar,gz,sql,ini,log,yml,json",
     },
     "tools": {
         "nmap": "nmap",
@@ -49,10 +56,25 @@ DEFAULTS: Dict[str, Any] = {
         "theharvester": "theHarvester",
         "gowitness": "gowitness",
         "ldapsearch": "ldapsearch",
+        "kerbrute": "kerbrute",
+        "getnpusers": "impacket-GetNPUsers",
+        "getuserspns": "impacket-GetUserSPNs",
+        "bloodhound": "bloodhound-python",
+        "certipy": "certipy",
+        "searchsploit": "searchsploit",
+        "openssl": "openssl",
     },
     "concurrency": {
         "max_workers": 4,
         "heavy_tools": 2,
+    },
+    "active_directory": {
+        "max_asrep_users": 200,
+        "bloodhound_collectors": "All",
+    },
+    "htb": {
+        "add_hosts_entry": True,
+        "generate_notes": True,
     },
     "profiles": {
         "stealth": {
@@ -86,6 +108,9 @@ class RVRConfig:
         self.concurrency = data.get("concurrency", DEFAULTS["concurrency"])
         self.profiles = data.get("profiles", DEFAULTS["profiles"])
         self.output = data.get("output", DEFAULTS["output"])
+        self.web_extensions = data.get("web_extensions", DEFAULTS["web_extensions"])
+        self.active_directory = data.get("active_directory", DEFAULTS["active_directory"])
+        self.htb = data.get("htb", DEFAULTS["htb"])
 
     def tool(self, key: str) -> str:
         """Resolve a logical tool name (e.g. 'enum4linux') to the actual
